@@ -1,0 +1,12 @@
+node_modules
+.env
+data/goalbound.db
+data/goalbound.db-shm
+data/goalbound.db-wal
+data/user-coaches.json
+data/media-prep-cache.json
+data/qol-store.json
+data/guild-settings.json
+data/guild-activity.json
+data/backups/
+data/dados/

@@ -1,0 +1,18 @@
+{
+  "name": "goalbound-bot",
+  "version": "1.3.0",
+  "description": "Goal Bound - Discord card-collecting bot themed around Blue Lock (summon characters, build a formation, climb the live leaderboard)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test tests/formations.test.js tests/xpCurve.test.js tests/rarities.test.js tests/ieneAtomic.test.js tests/teamCache.test.js tests/i18n.test.js tests/claimCooldown.test.js tests/pity.test.js",
+    "backup": "node tools/backup-db.js",
+    "backup:schedule": "powershell -ExecutionPolicy Bypass -File tools/schedule-backup-windows.ps1"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.4.5",
+    "sharp": "^0.35.3"
+  }
+}
