@@ -14,7 +14,8 @@ const COOLDOWN_MS = {
   banners: 3_000,
   daily: 3_000,
   stats: 5_000,
-  setchannel: 5_000
+  setchannel: 5_000,
+  leaderboard: 3_000
   // reload: owner-only — no limit
 };
 
