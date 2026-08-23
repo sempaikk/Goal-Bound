@@ -15,8 +15,7 @@ const COOLDOWN_MS = {
   daily: 3_000,
   stats: 5_000,
   setchannel: 5_000,
-  leaderboard: 3_000,
-  card: 4_000
+  leaderboard: 3_000
   // reload: owner-only — no limit
 };
 
