@@ -35,10 +35,22 @@ function pickHook(userId) {
   return t(userId, key);
 }
 
+function boardBaseUrl() {
+  const web = getInfo();
+  if (web.url) return web.url;
+  const pub = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN;
+  if (pub) {
+    const raw = String(pub).trim().replace(/\/$/, '');
+    const origin = raw.startsWith('http') ? raw : `https://${raw}`;
+    return `${origin}/leaderboard`;
+  }
+  return null;
+}
+
 module.exports = {
   data: withPtBr(
     new SlashCommandBuilder()
-      .setName('rank')
+      .setName('leaderboard')
       .setDescription('🏆 Live top-100 board — open, climb, dominate'),
     '🏆 Placar ao vivo top 100 — abrir, subir, dominar'
   ),
@@ -48,10 +60,10 @@ module.exports = {
       const userId = interaction.user.id;
       DataService.ensureUser(userId, interaction.user.username);
 
-      const web = getInfo();
-      const base =
-        web.url || 'https://goal-bound-production.up.railway.app/leaderboard';
-      const url = `${base}?user=${encodeURIComponent(userId)}`;
+      const base = boardBaseUrl();
+      const url = base
+        ? `${base}?user=${encodeURIComponent(userId)}`
+        : null;
 
       const hook = pickHook(userId);
       const sp = computeSquadScore(userId);
@@ -106,8 +118,10 @@ module.exports = {
           new SeparatorBuilder()
             .setDivider(true)
             .setSpacing(SeparatorSpacingSize.Small)
-        )
-        .addActionRowComponents(
+        );
+
+      if (url) {
+        container.addActionRowComponents(
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setStyle(ButtonStyle.Link)
@@ -115,7 +129,10 @@ module.exports = {
               .setLabel(t(userId, 'lb_open').slice(0, 80))
               .setEmoji('⚽')
           )
-        )
+        );
+      }
+
+      container
         .addActionRowComponents(
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -144,7 +161,7 @@ module.exports = {
         flags: MessageFlags.IsComponentsV2
       });
     } catch (error) {
-      logger.error('Error in /rank', error.message);
+      logger.error('Error in /leaderboard', error.message);
       try {
         const payload = {
           embeds: [buildStatusEmbed('ERROR', config.MESSAGES.ERROR_LOADING)],
