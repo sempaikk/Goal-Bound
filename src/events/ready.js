@@ -137,7 +137,7 @@ function buildPresenceActivities(client) {
   return [
     { name: '/banners', type: ActivityType.Playing },
     { name: '/team · build your eleven', type: ActivityType.Playing },
-    { name: '/rank · squad leaderboard', type: ActivityType.Watching },
+    { name: '/leaderboard · squad board', type: ActivityType.Watching },
     {
       name: cardCount > 0 ? `${cardCount} egoists to collect` : 'Goal Bound',
       type: ActivityType.Watching
