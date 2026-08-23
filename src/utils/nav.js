@@ -14,7 +14,7 @@ const {
 } = require('discord.js');
 const { t } = require('./i18n.js');
 
-const DEST_KEYS = ['profile', 'collection', 'team', 'banners', 'daily', 'rank'];
+const DEST_KEYS = ['profile', 'collection', 'team', 'banners', 'daily', 'leaderboard'];
 
 function destMeta(userId, key) {
   const map = {
@@ -23,7 +23,7 @@ function destMeta(userId, key) {
     team: { label: t(userId, 'nav_eleven'), emoji: '📋' },
     banners: { label: t(userId, 'nav_banner'), emoji: '🎴' },
     daily: { label: t(userId, 'nav_daily'), emoji: '💰' },
-    rank: { label: t(userId, 'nav_board'), emoji: '🏆' }
+    leaderboard: { label: t(userId, 'nav_board'), emoji: '🏆' }
   };
   return map[key] || { label: key, emoji: '•' };
 }
@@ -95,7 +95,7 @@ function buildCtaRow(ownerId, kind) {
       .setEmoji('🎴')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId(`cta:${ownerId}:rank`)
+      .setCustomId(`cta:${ownerId}:leaderboard`)
       .setLabel(t(ownerId, 'cta_board').slice(0, 80))
       .setEmoji('🏆')
       .setStyle(ButtonStyle.Secondary)
@@ -117,6 +117,19 @@ function attachRows(container, rows) {
     container.addActionRowComponents(row);
   }
   return container;
+}
+
+function boardBaseUrl() {
+  const { getInfo } = require('../services/webServer.js');
+  const web = getInfo();
+  if (web.url) return web.url;
+  const pub = process.env.PUBLIC_URL || process.env.RAILWAY_PUBLIC_DOMAIN;
+  if (pub) {
+    const raw = String(pub).trim().replace(/\/$/, '');
+    const origin = raw.startsWith('http') ? raw : `https://${raw}`;
+    return `${origin}/leaderboard`;
+  }
+  return null;
 }
 
 /**
@@ -215,13 +228,10 @@ async function openDestination(interaction, dest, ownerId) {
       return;
     }
 
-    if (dest === 'rank') {
-      const { getInfo } = require('../services/webServer.js');
+    if (dest === 'leaderboard' || dest === 'rank') {
       const { computeSquadScore, formatScore } = require('../services/squadScore.js');
-      const web = getInfo();
-      const base =
-        web.url || 'https://goal-bound-production.up.railway.app/leaderboard';
-      const url = `${base}?user=${encodeURIComponent(ownerId)}`;
+      const base = boardBaseUrl();
+      const url = base ? `${base}?user=${encodeURIComponent(ownerId)}` : null;
       const sp = computeSquadScore(ownerId);
       const power =
         sp.filled > 0
@@ -230,15 +240,9 @@ async function openDestination(interaction, dest, ownerId) {
               filled: sp.filled
             })
           : t(ownerId, 'nav_rank_empty');
-      await interaction.followUp({
-        embeds: [
-          buildStatusEmbed(
-            'PRIMARY',
-            t(ownerId, 'nav_rank_title'),
-            `${power}\n\n[${t(ownerId, 'lb_open')}](${url})`
-          )
-        ],
-        components: [
+      const components = [];
+      if (url) {
+        components.push(
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setStyle(ButtonStyle.Link)
@@ -246,7 +250,19 @@ async function openDestination(interaction, dest, ownerId) {
               .setLabel(t(ownerId, 'lb_open').slice(0, 80))
               .setEmoji('⚽')
           )
+        );
+      }
+      await interaction.followUp({
+        embeds: [
+          buildStatusEmbed(
+            'PRIMARY',
+            t(ownerId, 'nav_rank_title'),
+            url
+              ? `${power}\n\n[${t(ownerId, 'lb_open')}](${url})`
+              : power
+          )
         ],
+        components,
         flags: 64
       });
       return;
