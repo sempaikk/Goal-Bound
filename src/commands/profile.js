@@ -3,7 +3,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  UserSelectMenuBuilder,
   MessageFlags,
   ContainerBuilder,
   TextDisplayBuilder,
@@ -27,8 +26,7 @@ const { formatPassiveShort } = require('../services/coachPassives.js');
 const { getStaffTitles } = require('../services/staff.js');
 const { getPlayerRank } = require('../services/playerRank.js');
 const { openDestination } = require('../utils/nav.js');
-const { t, rankLabel, rarityLabel, localeOf } = require('../utils/i18n.js');
-const { toggleLocale } = require('../services/qolStore.js');
+const { t, rankLabel, rarityLabel } = require('../utils/i18n.js');
 const {
   binderByBannerLines,
   almostCompleteLines,
@@ -40,12 +38,13 @@ const { withPtBr, optionPtBr } = require('../utils/slashLocale.js');
 const CUSTOM_ID_PREFIX = 'profile';
 
 function accentInt() {
-  const hex = String(config.COLORS?.PRIMARY || '#FF4D8D').replace('#', '');
+  const hex = String((config.COLORS && config.COLORS.PRIMARY) || '#FF4D8D').replace('#', '');
   const n = parseInt(hex, 16);
   return Number.isFinite(n) ? n : 0xff4d8d;
 }
 
-function miniBar(current, total, length = 8) {
+function miniBar(current, total, length) {
+  if (length == null) length = 8;
   if (total <= 0) return '▱'.repeat(length);
   const ratio = Math.max(0, Math.min(1, current / total));
   const filled = Math.round(ratio * length);
@@ -59,7 +58,6 @@ function buildProfilePayload(targetUser, viewerId) {
   const isSelf = userId === viewerId;
   const avatarURL = targetUser.displayAvatarURL({ size: 256, extension: 'png' });
   const L = (key, vars) => t(viewerId, key, vars);
-  const loc = localeOf(viewerId);
 
   DataService.ensureUser(userId, username);
 
@@ -90,52 +88,54 @@ function buildProfilePayload(targetUser, viewerId) {
 
   const staffTitles = getStaffTitles(userId);
   const playerRank = getPlayerRank({
-    owned, poolSize, teamAvgLevel: avgLevel, teamSize: teamRows.length
+    owned: owned,
+    poolSize: poolSize,
+    teamAvgLevel: avgLevel,
+    teamSize: teamRows.length
   });
   const rankName = rankLabel(viewerId, playerRank.key);
   const nextRankName = playerRank.next ? rankLabel(viewerId, playerRank.next.key) : null;
 
-  const badges = [];
-  for (const st of staffTitles) badges.push(`${st.emoji} **${st.label}**`);
-  badges.push(`${playerRank.emoji} **${rankName}**`);
-  if (isCollectionComplete) badges.push(`🏁 ${L('profile_full_binder')}`);
-  if (isTeamComplete) badges.push(`✅ ${L('profile_eleven_ready')}`);
-  if (coachCard) badges.push(`${coachEmoji || '🎩'} ${coachCard.name}`);
-  if (!isSelf) badges.push(`${L('profile_viewing')} **${displayName}**`);
+  const badgeParts = [];
+  for (const st of staffTitles) badgeParts.push(st.emoji + ' **' + st.label + '**');
+  badgeParts.push(playerRank.emoji + ' **' + rankName + '**');
+  if (isCollectionComplete) badgeParts.push('🏁 **' + L('profile_full_binder') + '**');
+  if (isTeamComplete) badgeParts.push('✅ **' + L('profile_eleven_ready') + '**');
+  if (coachCard) badgeParts.push((coachEmoji || '🎩') + ' **' + coachCard.name + '**');
 
-  const titleBlock =
-    `# ${isCollectionComplete ? '🏁' : '🧬'} ${displayName}\n` +
-    (displayName !== username ? `\`@${username}\`\n` : '') +
-    badges.join(' · ');
+  let titleBlock = '# ' + (isCollectionComplete ? '🏁' : '🧬') + ' ' + displayName;
+  if (displayName !== username) titleBlock += '\n`' + '@' + username + '`;
+  if (!isSelf) titleBlock += '\n-# ' + L('profile_viewing') + ' **' + displayName + '**';
+  if (badgeParts.length) titleBlock += '\n' + badgeParts.join(' · ');
 
   const rankNextLine = playerRank.next
-    ? `${L('profile_next')} **${playerRank.next.emoji} ${nextRankName}** · ${playerRank.progressToNext}%`
+    ? L('profile_next') + ' **' + playerRank.next.emoji + ' ' + nextRankName + '** · `' + playerRank.progressToNext + '%`'
     : L('profile_max_rank');
 
   const elevenLabel = teamRows.length === 0
-    ? (isSelf ? `${L('profile_vacant')} · \`/team\`` : L('profile_vacant'))
-    : `**${teamRows.length}/11**${isTeamComplete ? ` ${L('profile_ready')}` : ''}` +
-      (avgLevel > 0 ? ` · ${L('profile_avg')} **${avgLevel}**` : '');
+    ? (isSelf ? L('profile_vacant') + ' · `/team`' : L('profile_vacant'))
+    : '**' + teamRows.length + '/11**' + (isTeamComplete ? ' ' + L('profile_ready') : '') +
+      (avgLevel > 0 ? ' · ' + L('profile_avg') + ' **' + avgLevel + '**' : '');
 
   const bannerBinder = binderByBannerLines(userId, cards, userCards);
   const almost = almostCompleteLines(userId, cards, userCards);
 
   let shapeLine =
-    `🏷️ **${L('profile_shape')}** · **${formation.label}**` +
-    (coachCard ? ` · ${coachEmoji || '🎩'} ${coachCard.name}` : ` · ${L('profile_no_master')}`);
-  if (masterPassive) shapeLine += `\n_${masterPassive}_`;
+    '**' + L('profile_shape') + '** · **' + formation.label + '**' +
+    (coachCard ? ' · ' + (coachEmoji || '🎩') + ' ' + coachCard.name : ' · ' + L('profile_no_master'));
+  if (masterPassive) shapeLine += '\n_' + masterPassive + '_';
 
-  const numLoc = loc === 'pt' ? 'pt-BR' : 'en-US';
   const statsBlock =
-    `### 📊 ${L('profile_overview')}\n` +
-    `${playerRank.emoji} **${L('profile_rank')}** · **${rankName}** · ${L('profile_score')} **${playerRank.score}**\n` +
-    `_${rankNextLine}_\n` +
-    `💰 **${L('profile_iene')}** · **${iene.toLocaleString(numLoc)}**\n` +
-    `📋 **${L('profile_eleven')}** · ${elevenLabel}\n` +
-    `📔 **${L('profile_binder')}** · **${owned}/${poolSize}** (${binderPct}%)${remaining > 0 ? ` · ${remaining} ${L('profile_left')}` : ` · ${L('profile_done')}`}\n` +
-    `${bannerBinder}` +
-    (almost ? `\n\n${almost}` : '') +
-    `\n${shapeLine}`;
+    '### 📊 ' + L('profile_overview') + '\n' +
+    playerRank.emoji + ' **' + L('profile_rank') + '** · **' + rankName + '** · ' + L('profile_score') + ' `' + playerRank.score + '`\n' +
+    '_' + rankNextLine + '_\n' +
+    '💰 **' + L('profile_iene') + '** · `' + iene.toLocaleString('pt-BR') + '`\n' +
+    '📋 **' + L('profile_eleven') + '** · ' + elevenLabel + '\n' +
+    '📔 **' + L('profile_binder') + '** · **' + owned + '/' + poolSize + '** (`' + binderPct + '%`)' +
+    (remaining > 0 ? ' · `' + remaining + '` ' + L('profile_left') : ' · ' + L('profile_done')) + '\n' +
+    bannerBinder +
+    (almost ? '\n\n' + almost : '') +
+    '\n' + shapeLine;
 
   let pitchBlock;
   if (teamRows.length > 0) {
@@ -145,18 +145,18 @@ function buildProfilePayload(targetUser, viewerId) {
         const entry = teamBySlot.get(slotKey);
         if (!entry) return '⬜';
         const head = emojiTag(getEmojiForCard(entry.cardId)) || '👤';
-        return `${head}\`${entry.level}\``;
+        return head + '`' + entry.level + '`;
       }).join('   ');
-      return `**${line.name}**\n${cells}`;
+      return '**' + line.name + '**\n' + cells;
     }).join('\n\n');
     const rankBlock = whoNeedsXpLines(userId, teamRows, 3) || '—';
     pitchBlock =
-      `### ⚽ ${L('profile_pitch')}\n${safeTruncate(squadPreview, 1200)}\n\n` +
-      `### 📈 ${L('profile_who_xp')}\n${rankBlock}`;
+      '### ⚽ ' + L('profile_pitch') + '\n' + safeTruncate(squadPreview, 1200) + '\n\n' +
+      '### 📈 ' + L('profile_who_xp') + '\n' + rankBlock;
   } else {
     pitchBlock =
-      `### ⚽ ${L('profile_pitch')}\n` +
-      (isSelf ? `_${L('profile_empty_pitch')}_` : `_${L('profile_no_shape')}_`);
+      '### ⚽ ' + L('profile_pitch') + '\n' +
+      '_' + (isSelf ? L('profile_empty_pitch') : L('profile_no_shape')) + '_';
   }
 
   const binderBar = progressBar(owned, poolSize, 14);
@@ -168,7 +168,8 @@ function buildProfilePayload(targetUser, viewerId) {
       return card && card.position !== 'CO' && card.rarity === key;
     }).length;
     const pct = Math.round((ownedInTier / totalInTier) * 100);
-    return `${RARITIES[key].emoji} **${rarityLabel(viewerId, key)}**  ${miniBar(ownedInTier, totalInTier, 8)}  **${ownedInTier}**/${totalInTier} (${pct}%)`;
+    return RARITIES[key].emoji + ' **' + rarityLabel(viewerId, key) + '**  ' +
+      miniBar(ownedInTier, totalInTier, 8) + '  **' + ownedInTier + '**/' + totalInTier + ' (`' + pct + '%)';
   }).filter(Boolean);
 
   const coachTotal = cards.filter(c => c.position === 'CO').length;
@@ -179,35 +180,38 @@ function buildProfilePayload(targetUser, viewerId) {
     }).length;
     const pct = Math.round((coachOwned / coachTotal) * 100);
     tierLines.push(
-      `🎩 **${L('profile_masters')}**  ${miniBar(coachOwned, coachTotal, 8)}  **${coachOwned}**/${coachTotal} (${pct}%)`
+      '🎩 **' + L('profile_masters') + '**  ' + miniBar(coachOwned, coachTotal, 8) +
+      '  **' + coachOwned + '**/' + coachTotal + ' (`' + pct + '%)'
     );
   }
 
   const recent = recentPullsLines(userId, 5);
   const binderBlock =
-    `### 📔 ${L('profile_binder')}\n` +
+    '### 📔 ' + L('profile_binder') + '\n' +
     (isCollectionComplete
-      ? `🏁 **${L('profile_full_set')}**\n${binderBar}`
-      : `${binderBar}`) +
-    `\n\n### 🏷️ ${L('profile_tiers')}\n` + (tierLines.join('\n') || '—') +
-    `\n\n### 📜 ${L('profile_last_pulls')}\n${recent}`;
+      ? '🏁 **' + L('profile_full_set') + '**\n' + binderBar
+      : binderBar) +
+    '\n\n### 🏷️ ' + L('profile_tiers') + '\n' + (tierLines.join('\n') || '—') +
+    '\n\n### 📜 ' + L('profile_last_pulls') + '\n' + recent;
 
   const footerNote = isSelf
-    ? `_${L('profile_footer_self')}_`
-    : `_${L('profile_footer_other')}_`;
+    ? '_' + L('profile_footer_self') + '_'
+    : '_' + L('profile_footer_other') + '_';
 
   const container = new ContainerBuilder()
     .setAccentColor(isCollectionComplete ? 0x57f287 : accentInt());
 
-  try {
-    container.addSectionComponents(
-      new SectionBuilder()
-        .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(titleBlock, 1800)))
-        .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarURL))
-    );
-  } catch {
-    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(titleBlock, 1800)));
-  }
+  container.addSectionComponents(
+    new SectionBuilder()
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(safeTruncate(titleBlock, 1800))
+      )
+      .setThumbnailAccessory(
+        new ThumbnailBuilder()
+          .setURL(avatarURL)
+          .setDescription(displayName)
+      )
+  );
 
   container
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
@@ -215,79 +219,68 @@ function buildProfilePayload(targetUser, viewerId) {
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
     .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(pitchBlock, 2800)))
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(`${binderBlock}\n\n${footerNote}`, 3200)))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        new UserSelectMenuBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}:${viewerId}:pickuser`)
-          .setPlaceholder(L('profile_compare'))
-          .setMinValues(1)
-          .setMaxValues(1)
-      )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(safeTruncate(binderBlock + '\n\n' + footerNote, 3200))
     );
 
   if (isSelf) {
-    const langLabel = loc === 'pt' ? '🇧🇷 PT' : '🇬🇧 EN';
-    container.addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:collection`)
-          .setLabel(L('profile_btn_binder'))
-          .setEmoji('📔')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:team`)
-          .setLabel(L('profile_btn_eleven'))
-          .setEmoji('📋')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:banners`)
-          .setLabel(L('profile_btn_banner'))
-          .setEmoji('🎴')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}:${viewerId}:share`)
-          .setLabel(L('profile_btn_share'))
-          .setEmoji('📣')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`${CUSTOM_ID_PREFIX}:${viewerId}:lang`)
-          .setLabel(langLabel)
-          .setStyle(ButtonStyle.Secondary)
-      )
-    );
+    container
+      .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+      .addActionRowComponents(
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:collection')
+            .setLabel(L('profile_btn_binder'))
+            .setEmoji('📔')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:team')
+            .setLabel(L('profile_btn_eleven'))
+            .setEmoji('📋')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:banners')
+            .setLabel(L('profile_btn_banner'))
+            .setEmoji('🎴')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':share')
+            .setLabel(L('profile_btn_share'))
+            .setEmoji('📣')
+            .setStyle(ButtonStyle.Success)
+        )
+      );
   }
 
-  return { container, isSelf };
+  return { container: container, isSelf: isSelf };
 }
 
 async function openProfilePanel(interaction, userId, targetUser) {
-  const { container } = buildProfilePayload(targetUser, userId);
+  const built = buildProfilePayload(targetUser, userId);
   try {
-    await interaction.editReply({ components: [container], flags: MessageFlags.IsComponentsV2 });
-  } catch {
+    await interaction.editReply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
+  } catch (e) {
     await interaction.followUp({
-      components: [container],
+      components: [built.container],
       flags: MessageFlags.IsComponentsV2 | 64
     });
   }
 }
 
 module.exports = {
-  buildProfilePayload,
-  openProfilePanel,
+  buildProfilePayload: buildProfilePayload,
+  openProfilePanel: openProfilePanel,
   data: withPtBr(
     new SlashCommandBuilder()
       .setName('profile')
-      .setDescription('🧬 Player card — rank, Iene, eleven, binder & shape')
+      .setDescription('Card do jogador — rank, iene, onze, binder e formacao')
       .addUserOption(opt =>
         optionPtBr(
-          opt.setName('user').setDescription('Whose card to view (default: you)').setRequired(false),
-          'De quem ver o card (padrão: você)'
+          opt.setName('user').setDescription('De quem ver o card (padrao: voce)').setRequired(false),
+          'De quem ver o card (padrao: voce)'
         )
       ),
-    '🧬 Card do jogador — rank, Iene, onze, binder e formação'
+    'Card do jogador — rank, iene, onze, binder e formacao'
   ),
 
   async execute(interaction) {
@@ -295,13 +288,13 @@ module.exports = {
       const target = interaction.options.getUser('user') || interaction.user;
       if (target.bot) {
         await interaction.reply({
-          embeds: [buildStatusEmbed('WARNING', '🤖 Automated accounts stay on the bench', config.MESSAGES.BOTS_DONT_PLAY || 'Pick a human.')],
+          embeds: [buildStatusEmbed('WARNING', t(interaction.user.id, 'col_bots') || 'Contas automaticas nao jogam', config.MESSAGES.BOTS_DONT_PLAY || 'Escolha uma pessoa.')],
           flags: 64
         });
         return;
       }
-      const { container } = buildProfilePayload(target, interaction.user.id);
-      await interaction.reply({ components: [container], flags: MessageFlags.IsComponentsV2 });
+      const built = buildProfilePayload(target, interaction.user.id);
+      await interaction.reply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
       await maybeSendDmHint(interaction);
     } catch (error) {
       logger.error('Error in /profile command', error.message);
@@ -309,7 +302,7 @@ module.exports = {
         if (!interaction.replied && !interaction.deferred) {
           await interaction.reply({ embeds: [buildStatusEmbed('ERROR', config.MESSAGES.ERROR_LOADING)], flags: 64 });
         }
-      } catch (_) {}
+      } catch (e) {}
     }
   },
 
@@ -318,68 +311,27 @@ module.exports = {
     const ownerId = parts[1];
     const action = parts[2];
     const dest = parts[3];
+
     if (interaction.user.id !== ownerId) {
       await interaction.reply({
-        embeds: [buildStatusEmbed('WARNING', '🚫 Not your panel', 'Open **`/profile`** yourself.')],
+        embeds: [buildStatusEmbed('WARNING', 'Painel de outra pessoa', 'Abra o seu com **/profile**.')],
         flags: 64
       });
-      return;
-    }
-
-    if (action === 'lang') {
-      const next = toggleLocale(ownerId);
-      const msg = next === 'pt' ? t(ownerId, 'lang_set_pt') : t(ownerId, 'lang_set_en');
-      await interaction.reply({
-        embeds: [buildStatusEmbed('SUCCESS', next === 'pt' ? '🇧🇷' : '🇬🇧', msg)],
-        flags: 64
-      });
-      try {
-        const { container } = buildProfilePayload(interaction.user, ownerId);
-        await interaction.message.edit({
-          components: [container],
-          flags: MessageFlags.IsComponentsV2
-        });
-      } catch {
-        /* ignore if message not editable */
-      }
       return;
     }
 
     if (action === 'share') {
-      const { container } = buildProfilePayload(interaction.user, ownerId);
+      const built = buildProfilePayload(interaction.user, ownerId);
       try {
         await interaction.reply({
-          components: [container],
+          components: [built.container],
           flags: MessageFlags.IsComponentsV2
         });
-      } catch {
+      } catch (e) {
         await interaction.followUp({
-          components: [container],
+          components: [built.container],
           flags: MessageFlags.IsComponentsV2
         });
-      }
-      return;
-    }
-
-    if (action === 'pickuser') {
-      await interaction.deferUpdate();
-      try {
-        const selected =
-          interaction.users?.first?.() ||
-          (interaction.values?.[0]
-            ? await interaction.client.users.fetch(interaction.values[0]).catch(() => null)
-            : null);
-        if (!selected || selected.bot) {
-          await interaction.followUp({
-            embeds: [buildStatusEmbed('WARNING', '🤖 Pick a human', config.MESSAGES.BOTS_DONT_PLAY)],
-            flags: 64
-          });
-          return;
-        }
-        const { container } = buildProfilePayload(selected, ownerId);
-        await interaction.editReply({ components: [container], flags: MessageFlags.IsComponentsV2 });
-      } catch (error) {
-        logger.error('Error handling profile user select', error.message);
       }
       return;
     }
@@ -390,7 +342,7 @@ module.exports = {
     }
 
     if (action === 'nav') {
-      await openDestination(interaction, interaction.values?.[0], ownerId);
+      await openDestination(interaction, interaction.values && interaction.values[0], ownerId);
     }
   }
 };
