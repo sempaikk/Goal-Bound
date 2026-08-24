@@ -46,7 +46,6 @@ const {
 } = require('../utils/collectionFilter.js');
 
 const CUSTOM_ID_PREFIX = 'collection';
-/** Max cards per page (1 Section + 1 file each). Discord is comfortable with ~5–8. */
 const CARDS_PER_PAGE = 5;
 const SORTS = ['rarity', 'level', 'name'];
 const COACH_GROUP = 'COACH';
@@ -88,36 +87,36 @@ function localizedTierOptions(userId) {
 }
 
 function buildSortSelectId(viewerId, targetId, page) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:sortsel:${page}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':sortsel:' + page;
 }
 
 function buildTierSelectId(viewerId, targetId, page, sort) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:tiersel:${page}:${sort}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':tiersel:' + page + ':' + sort;
 }
 
 function buildPageId(viewerId, targetId, page, sort, query) {
   const q = encodeURIComponent(query || '');
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:page:${page}:${sort}:${q}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':page:' + page + ':' + sort + ':' + q;
 }
 
 function buildNoopId(viewerId, targetId, page, sort) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:noop:${page}:${sort}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':noop:' + page + ':' + sort;
 }
 
 function buildSearchId(viewerId, targetId, sort) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:search:${sort}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':search:' + sort;
 }
 
 function buildClearSearchId(viewerId, targetId, sort) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:clearq:${sort}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':clearq:' + sort;
 }
 
 function buildModalId(viewerId, targetId, sort) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:${targetId}:modal:${sort}`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':' + targetId + ':modal:' + sort;
 }
 
 function buildPickUserId(viewerId) {
-  return `${CUSTOM_ID_PREFIX}:${viewerId}:_:pickuser`;
+  return CUSTOM_ID_PREFIX + ':' + viewerId + ':_:pickuser';
 }
 
 function parseCustomId(customId) {
@@ -138,7 +137,7 @@ function parseCustomId(customId) {
 }
 
 function ovrFromStats(card) {
-  const s = card?.stats;
+  const s = card && card.stats;
   if (!s) return 70;
   const vals = [s.speed, s.technique, s.physique, s.tactical].filter(n => typeof n === 'number');
   if (!vals.length) return 70;
@@ -146,20 +145,19 @@ function ovrFromStats(card) {
   return Math.min(99, Math.max(50, Math.round(50 + avg * 4.5)));
 }
 
-/** Resolve local card art (FUT PNG preferred, then icon). */
 function resolveArtPath(card) {
-  if (card?.localImage) {
+  if (card && card.localImage) {
     const full = path.join(IMAGES_DIR, card.localImage);
     if (fs.existsSync(full)) return full;
     const underCards = path.join(IMAGES_DIR, 'cards', path.basename(card.localImage));
     if (fs.existsSync(underCards)) return underCards;
   }
-  if (card?.icon) {
+  if (card && card.icon) {
     const full = path.join(ICONS_DIR, card.icon);
     if (fs.existsSync(full)) return full;
   }
-  if (card?.id != null) {
-    const byId = path.join(IMAGES_DIR, 'cards', `${card.id}.png`);
+  if (card && card.id != null) {
+    const byId = path.join(IMAGES_DIR, 'cards', String(card.id) + '.png');
     if (fs.existsSync(byId)) return byId;
   }
   return null;
@@ -169,7 +167,7 @@ function buildCardEntries(validUserCards, cards, cardIdsInTeam, sort, query, use
   const rarityRank = key => RARITY_ORDER.indexOf(key);
   const tier = parseTierFromQuery(query);
   const q = textQuery(query).toLowerCase();
-  let sortedUserCards = [...validUserCards];
+  let sortedUserCards = validUserCards.slice();
   sortedUserCards = sortedUserCards.filter(uc => {
     const card = cards.find(c => c.id === uc.id);
     if (!card) return false;
@@ -242,16 +240,19 @@ function buildCardEntries(validUserCards, cards, cardIdsInTeam, sort, query, use
 function makeEntry(userCard, cards, rarity, cardIdsInTeam, rarityKey, userId) {
   const card = cards.find(c => c.id === userCard.id);
   const isCoach = card.position === 'CO';
-  const emoji = isCoach ? '🎩' : (rarity?.emoji || '🃏');
+  const emoji = isCoach ? '🎩' : ((rarity && rarity.emoji) || '🃏');
   const teamBadge = cardIdsInTeam.has(userCard.id) ? ' 📌' : '';
   let line;
-  if (isCoach) line = `${emoji} **${card.name}** 🎩 \`${t(userId, 'col_master_tag')}\`;
-  else line = `${emoji} **${card.name}** \`Lv.${userCard.level}\`${teamBadge} ${positionEmoji(card.position)} \`${card.position}\`;
+  if (isCoach) {
+    line = emoji + ' **' + card.name + '** 🎩 `' + t(userId, 'col_master_tag') + '`;
+  } else {
+    line = emoji + ' **' + card.name + '** `Lv.' + userCard.level + '`' + teamBadge + ' ' + positionEmoji(card.position) + ' `' + card.position + '`;
+  }
   return {
-    rarityKey,
-    line,
+    rarityKey: rarityKey,
+    line: line,
     name: card.name,
-    card,
+    card: card,
     level: userCard.level || 0,
     onTeam: cardIdsInTeam.has(userCard.id)
   };
@@ -265,7 +266,7 @@ function buildBreakdown(validUserCards, cards, userId) {
       const card = cards.find(c => c.id === uc.id);
       return card && card.position !== 'CO' && card.rarity === key;
     }).length;
-    return `${RARITIES[key].emoji} **${rarityLabel(userId, key)}** ${ownedInTier}/${totalInTier}`;
+    return RARITIES[key].emoji + ' **' + rarityLabel(userId, key) + '** ' + ownedInTier + '/' + totalInTier;
   }).filter(Boolean);
   const coachTotal = cards.filter(c => c.position === 'CO').length;
   if (coachTotal > 0) {
@@ -273,7 +274,7 @@ function buildBreakdown(validUserCards, cards, userId) {
       const card = cards.find(c => c.id === uc.id);
       return card && card.position === 'CO';
     }).length;
-    lines.push(`🎩 **${t(userId, 'profile_masters')}** ${coachOwned}/${coachTotal}`);
+    lines.push('🎩 **' + t(userId, 'profile_masters') + '** ' + coachOwned + '/' + coachTotal);
   }
   return lines.join('  ·  ');
 }
@@ -329,56 +330,62 @@ function buildComponents(viewerId, targetId, page, totalPages, sort, query) {
   if (totalPages > 1) {
     rows.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(buildPageId(viewerId, targetId, page - 1, sort, query)).setLabel(t(uid, 'col_prev')).setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
-      new ButtonBuilder().setCustomId(buildNoopId(viewerId, targetId, page, sort)).setLabel(`${page + 1} / ${totalPages}`).setStyle(ButtonStyle.Primary).setDisabled(true),
+      new ButtonBuilder().setCustomId(buildNoopId(viewerId, targetId, page, sort)).setLabel((page + 1) + ' / ' + totalPages).setStyle(ButtonStyle.Primary).setDisabled(true),
       new ButtonBuilder().setCustomId(buildPageId(viewerId, targetId, page + 1, sort, query)).setLabel(t(uid, 'col_next')).setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1)
     ));
   }
   return rows;
 }
 
-/**
- * Build one catalog row: native Discord Section (text left + Thumbnail right).
- * Returns { section | text, file? }.
- */
 function buildCatalogRow(entry, index) {
-  const { card, level, onTeam } = entry;
+  const card = entry.card;
+  const level = entry.level;
+  const onTeam = entry.onTeam;
   const isCoach = card.position === 'CO';
   const ovr = ovrFromStats(card);
   const pos = isCoach ? 'CO' : String(card.position || '?');
   const rarity = isCoach ? null : (RARITIES[card.rarity] || RARITIES.LOCKED);
-  const emoji = isCoach ? '🎩' : (rarity?.emoji || '🃏');
+  const emoji = isCoach ? '🎩' : ((rarity && rarity.emoji) || '🃏');
   const team = onTeam ? ' · 📌' : '';
 
-  const title = `**${index}. ${card.name}**`;
+  const title = '**' + index + '. ' + card.name + '**';
   const detail = isCoach
-    ? `${emoji} Master · OVR ${ovr}`
-    : `${emoji} ${pos} · OVR ${ovr} · Lv.${level}${team}`;
-  const content = `${title}\n${detail}`;
+    ? (emoji + ' Master · OVR ' + ovr)
+    : (emoji + ' ' + pos + ' · OVR ' + ovr + ' · Lv.' + level + team);
+  const content = title + '\n' + detail;
 
   const artPath = resolveArtPath(card);
   if (artPath) {
-    const filename = `card_${card.id}.png`;
+    const filename = 'card_' + card.id + '.png';
     const file = new AttachmentBuilder(artPath, { name: filename });
     const section = new SectionBuilder()
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(content, 900)))
       .setThumbnailAccessory(
         new ThumbnailBuilder()
-          .setURL(`attachment://${filename}`)
+          .setURL('attachment://' + filename)
           .setDescription(card.name)
       );
-    return { section, file };
+    return { section: section, file: file };
   }
 
-  // No art → plain text (Section requires an accessory)
   return {
-    text: new TextDisplayBuilder().setContent(safeTruncate(`${content}\n-# (sem arte)`, 900))
+    text: new TextDisplayBuilder().setContent(safeTruncate(content + '\n-# (sem arte)', 900))
   };
 }
 
 async function buildCollectionContainer(opts) {
-  const {
-    username, entries, page, cards, validUserCards, teamCount, isSelf, sort, query, viewerId, targetId
-  } = opts;
+  const username = opts.username;
+  const entries = opts.entries;
+  const page = opts.page;
+  const cards = opts.cards;
+  const validUserCards = opts.validUserCards;
+  const teamCount = opts.teamCount;
+  const isSelf = opts.isSelf;
+  const sort = opts.sort;
+  const query = opts.query;
+  const viewerId = opts.viewerId;
+  const targetId = opts.targetId;
+
   const totalPages = Math.max(1, Math.ceil(entries.length / CARDS_PER_PAGE));
   const safePage = Math.min(Math.max(0, page), totalPages - 1);
   const start = safePage * CARDS_PER_PAGE;
@@ -390,7 +397,7 @@ async function buildCollectionContainer(opts) {
   const sortLabel = sortLabelOf(viewerId, sort);
   const tier = parseTierFromQuery(query);
   const progressLine = isComplete
-    ? t(viewerId, 'col_full_set', { owned, pool: poolSize })
+    ? t(viewerId, 'col_full_set', { owned: owned, pool: poolSize })
     : t(viewerId, 'col_left', { bar: progressBar(owned, poolSize, 10), n: remaining });
   let filterLine = null;
   if (isTierQuery(query) && tier !== TIER_ALL) {
@@ -411,14 +418,12 @@ async function buildCollectionContainer(opts) {
       n: t(viewerId, 'col_n_matches', { n: entries.length })
     });
   }
-  const header =
-    `# ${isComplete ? '🏁' : '📔'} ${t(viewerId, 'col_binder_title', { user: username })}\n` +
-    (isSelf ? '' : `${t(viewerId, 'col_viewing')}\n`) +
-    `${progressLine}` +
-    (filterLine ? `\n${filterLine}` : '');
-  const meta =
-    `${t(viewerId, 'col_on_pitch', { n: teamCount, sort: sortLabel })}\n` +
-    `🏷️ ${buildBreakdown(validUserCards, cards, viewerId) || '—'}`;
+  let header = '# ' + (isComplete ? '🏁' : '📔') + ' ' + t(viewerId, 'col_binder_title', { user: username }) + '\n';
+  if (!isSelf) header += t(viewerId, 'col_viewing') + '\n';
+  header += progressLine;
+  if (filterLine) header += '\n' + filterLine;
+  const meta = t(viewerId, 'col_on_pitch', { n: teamCount, sort: sortLabel }) + '\n' +
+    '🏷️ ' + (buildBreakdown(validUserCards, cards, viewerId) || '—');
 
   const container = new ContainerBuilder()
     .setAccentColor(isComplete ? 0x57f287 : accentInt())
@@ -453,26 +458,29 @@ async function buildCollectionContainer(opts) {
     container.addActionRowComponents(row);
   }
 
-  return { container, safePage, totalPages, files };
+  return { container: container, safePage: safePage, totalPages: totalPages, files: files };
 }
 
-async function renderCollectionFor(viewerId, targetId, username, avatarURL, page, isSelf, sort = 'rarity', query = '') {
+async function renderCollectionFor(viewerId, targetId, username, avatarURL, page, isSelf, sort, query) {
+  if (sort === undefined) sort = 'rarity';
+  if (query === undefined) query = '';
   const cards = DataService.loadCards();
   const validUserCards = DataService.getValidUserCards(targetId, cards);
   const teamRows = DataService.getTeam(targetId);
   const cardIdsInTeam = new Set(teamRows.map(row => row.cardId));
   const entries = buildCardEntries(validUserCards, cards, cardIdsInTeam, sort, query, viewerId);
-  const { container, safePage, totalPages, files } = await buildCollectionContainer({
-    username, entries, page, cards, validUserCards, teamCount: teamRows.length, isSelf, sort, query, viewerId, targetId
+  const built = await buildCollectionContainer({
+    username: username, entries: entries, page: page, cards: cards, validUserCards: validUserCards,
+    teamCount: teamRows.length, isSelf: isSelf, sort: sort, query: query, viewerId: viewerId, targetId: targetId
   });
   return {
-    container,
+    container: built.container,
     totalCards: validUserCards.length,
     poolSize: cards.length,
     isEmpty: validUserCards.length === 0,
-    safePage,
-    totalPages,
-    files
+    safePage: built.safePage,
+    totalPages: built.totalPages,
+    files: built.files
   };
 }
 
@@ -480,13 +488,13 @@ async function replyCollectionV2(interaction, result, isEdit) {
   const payload = {
     components: [result.container],
     flags: MessageFlags.IsComponentsV2,
-    files: result.files && result.files.length ? result.files : []
+    files: (result.files && result.files.length) ? result.files : []
   };
   if (isEdit || interaction.deferred || interaction.replied) {
     try {
       await interaction.editReply(payload);
-    } catch {
-      await interaction.followUp({ ...payload, flags: MessageFlags.IsComponentsV2 | 64 });
+    } catch (e) {
+      await interaction.followUp({ components: payload.components, flags: MessageFlags.IsComponentsV2 | 64, files: payload.files });
     }
   } else {
     await interaction.reply(payload);
@@ -500,7 +508,7 @@ function emptyBinderPayload(ownerId, isSelf, username) {
         'WARNING',
         t(ownerId, 'col_empty_title'),
         isSelf
-          ? `${t(ownerId, 'empty_binder')}\n\n${t(ownerId, 'empty_binder_cta')}`
+          ? (t(ownerId, 'empty_binder') + '\n\n' + t(ownerId, 'empty_binder_cta'))
           : t(ownerId, 'col_empty_other', { user: username })
       )
     ],
@@ -514,11 +522,7 @@ async function openCollectionPanel(interaction, userId, username, avatarURL) {
   const result = await renderCollectionFor(userId, userId, username, avatarURL, 0, true, 'rarity', '');
   if (result.isEmpty) {
     const payload = emptyBinderPayload(userId, true, username);
-    try {
-      await interaction.editReply(payload);
-    } catch {
-      await interaction.followUp({ ...payload, flags: 64 });
-    }
+    try { await interaction.editReply(payload); } catch (e) { await interaction.followUp({ embeds: payload.embeds, components: payload.components, flags: 64 }); }
     return;
   }
   await replyCollectionV2(interaction, result, true);
@@ -531,28 +535,24 @@ async function openCollectionPanelForTarget(interaction, viewerId, targetUser) {
   const result = await renderCollectionFor(viewerId, targetId, targetUser.username, targetUser.displayAvatarURL(), 0, isSelf, 'rarity', '');
   if (result.isEmpty) {
     const payload = emptyBinderPayload(viewerId, isSelf, targetUser.username);
-    try {
-      await interaction.editReply(payload);
-    } catch {
-      await interaction.followUp({ ...payload, flags: 64 });
-    }
+    try { await interaction.editReply(payload); } catch (e) { await interaction.followUp({ embeds: payload.embeds, components: payload.components, flags: 64 }); }
     return;
   }
   await replyCollectionV2(interaction, result, true);
 }
 
 module.exports = {
-  renderCollectionFor,
-  openCollectionPanel,
-  openCollectionPanelForTarget,
+  renderCollectionFor: renderCollectionFor,
+  openCollectionPanel: openCollectionPanel,
+  openCollectionPanelForTarget: openCollectionPanelForTarget,
   data: withPtBr(
     new SlashCommandBuilder()
       .setName('collection')
-      .setDescription('📔 Browse a binder — tier, role, search, order')
+      .setDescription('Browse a binder — tier, role, search, order')
       .addUserOption(opt =>
         optionPtBr(
           opt.setName('user').setDescription('Whose binder to view (default: you)').setRequired(false),
-          'De quem ver o binder (padrão: você)'
+          'De quem ver o binder (padrao: voce)'
         )
       )
       .addStringOption(opt =>
@@ -561,7 +561,7 @@ module.exports = {
           'Filtrar pelo nome da carta (autocomplete)'
         )
       ),
-    '📔 Binder — raridade, posição, busca e ordem'
+    'Binder — raridade, posicao, busca e ordem'
   ),
 
   async autocomplete(interaction) {
@@ -590,7 +590,8 @@ module.exports = {
       const result = await renderCollectionFor(viewerId, targetId, target.username, target.displayAvatarURL(), 0, isSelf, 'rarity', filterOpt);
       if (result.isEmpty) {
         await interaction.reply({
-          ...emptyBinderPayload(viewerId, isSelf, target.username),
+          embeds: emptyBinderPayload(viewerId, isSelf, target.username).embeds,
+          components: emptyBinderPayload(viewerId, isSelf, target.username).components,
           flags: isSelf ? 0 : 64
         });
         return;
@@ -603,20 +604,25 @@ module.exports = {
         if (!interaction.replied && !interaction.deferred) {
           await interaction.reply({ embeds: [buildStatusEmbed('ERROR', config.MESSAGES.ERROR_LOADING)], flags: 64 });
         }
-      } catch (_) {}
+      } catch (e) {}
     }
   },
 
   async handleComponent(interaction) {
     const parsed = parseCustomId(interaction.customId);
-    let { viewerId, targetId, action, page, sort, query } = parsed;
+    let viewerId = parsed.viewerId;
+    let targetId = parsed.targetId;
+    let action = parsed.action;
+    let page = parsed.page;
+    let sort = parsed.sort;
+    let query = parsed.query;
     if (action === 'nav') {
-      await openDestination(interaction, interaction.values?.[0], viewerId);
+      await openDestination(interaction, interaction.values && interaction.values[0], viewerId);
       return;
     }
     if (action === 'sortsel') {
       page = parseInt(String(interaction.customId).split(':')[4], 10) || 0;
-      sort = interaction.values?.[0] || 'rarity';
+      sort = (interaction.values && interaction.values[0]) || 'rarity';
       if (!SORTS.includes(sort)) sort = 'rarity';
       action = 'sort';
     }
@@ -624,7 +630,7 @@ module.exports = {
       const parts = String(interaction.customId).split(':');
       page = 0;
       sort = SORTS.includes(parts[5]) ? parts[5] : 'rarity';
-      const tier = interaction.values?.[0] || TIER_ALL;
+      const tier = (interaction.values && interaction.values[0]) || TIER_ALL;
       query = encodeTierQuery(tier);
       action = 'sort';
     }
@@ -635,7 +641,10 @@ module.exports = {
     if (action === 'pickuser') {
       await interaction.deferUpdate();
       try {
-        const selected = interaction.users?.first?.() || (interaction.values?.[0] ? await interaction.client.users.fetch(interaction.values[0]).catch(() => null) : null);
+        let selected = interaction.users && interaction.users.first && interaction.users.first();
+        if (!selected && interaction.values && interaction.values[0]) {
+          selected = await interaction.client.users.fetch(interaction.values[0]).catch(() => null);
+        }
         if (!selected || selected.bot) {
           await interaction.followUp({ embeds: [buildStatusEmbed('WARNING', t(viewerId, 'col_pick_human'), config.MESSAGES.BOTS_DONT_COLLECT)], flags: 64 });
           return;
@@ -644,7 +653,7 @@ module.exports = {
         DataService.ensureUser(selected.id, selected.username);
         const result = await renderCollectionFor(viewerId, selected.id, selected.username, selected.displayAvatarURL(), 0, isSelf, 'rarity', '');
         if (result.isEmpty) {
-          await interaction.followUp({ ...emptyBinderPayload(viewerId, isSelf, selected.username), flags: 64 });
+          await interaction.followUp({ embeds: emptyBinderPayload(viewerId, isSelf, selected.username).embeds, components: emptyBinderPayload(viewerId, isSelf, selected.username).components, flags: 64 });
           return;
         }
         await replyCollectionV2(interaction, result, true);
@@ -679,7 +688,7 @@ module.exports = {
           const user = await interaction.client.users.fetch(targetId);
           username = user.username;
           avatarURL = user.displayAvatarURL();
-        } catch { username = t(viewerId, 'col_player'); }
+        } catch (e) { username = t(viewerId, 'col_player'); }
       }
       const nextPage = action === 'sort' ? 0 : page;
       const result = await renderCollectionFor(viewerId, targetId, username, avatarURL, nextPage, isSelf, sort, query);
@@ -699,7 +708,7 @@ module.exports = {
       return;
     }
     if (!targetId || targetId === '_' || targetId === '_ ') targetId = viewerId;
-    const query = interaction.fields.getTextInputValue('query')?.trim() || '';
+    const query = (interaction.fields.getTextInputValue('query') || '').trim();
     await interaction.deferUpdate();
     try {
       const isSelf = viewerId === targetId;
@@ -710,7 +719,7 @@ module.exports = {
           const user = await interaction.client.users.fetch(targetId);
           username = user.username;
           avatarURL = user.displayAvatarURL();
-        } catch { username = t(viewerId, 'col_player'); }
+        } catch (e) { username = t(viewerId, 'col_player'); }
       }
       const result = await renderCollectionFor(viewerId, targetId, username, avatarURL, 0, isSelf, sort, query);
       await replyCollectionV2(interaction, result, true);
