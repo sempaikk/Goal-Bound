@@ -36,6 +36,7 @@ const {
 const { withPtBr, optionPtBr } = require('../utils/slashLocale.js');
 
 const CUSTOM_ID_PREFIX = 'profile';
+const TICK = '`';
 
 function accentInt() {
   const hex = String((config.COLORS && config.COLORS.PRIMARY) || '#FF4D8D').replace('#', '');
@@ -104,16 +105,16 @@ function buildProfilePayload(targetUser, viewerId) {
   if (coachCard) badgeParts.push((coachEmoji || '🎩') + ' **' + coachCard.name + '**');
 
   let titleBlock = '# ' + (isCollectionComplete ? '🏁' : '🧬') + ' ' + displayName;
-  if (displayName !== username) titleBlock += '\n`' + '@' + username + '`;
+  if (displayName !== username) titleBlock += '\n' + TICK + '@' + username + TICK;
   if (!isSelf) titleBlock += '\n-# ' + L('profile_viewing') + ' **' + displayName + '**';
   if (badgeParts.length) titleBlock += '\n' + badgeParts.join(' · ');
 
   const rankNextLine = playerRank.next
-    ? L('profile_next') + ' **' + playerRank.next.emoji + ' ' + nextRankName + '** · `' + playerRank.progressToNext + '%`'
+    ? L('profile_next') + ' **' + playerRank.next.emoji + ' ' + nextRankName + '** · ' + TICK + playerRank.progressToNext + '%' + TICK
     : L('profile_max_rank');
 
   const elevenLabel = teamRows.length === 0
-    ? (isSelf ? L('profile_vacant') + ' · `/team`' : L('profile_vacant'))
+    ? (isSelf ? L('profile_vacant') + ' · ' + TICK + '/team' + TICK : L('profile_vacant'))
     : '**' + teamRows.length + '/11**' + (isTeamComplete ? ' ' + L('profile_ready') : '') +
       (avgLevel > 0 ? ' · ' + L('profile_avg') + ' **' + avgLevel + '**' : '');
 
@@ -127,12 +128,12 @@ function buildProfilePayload(targetUser, viewerId) {
 
   const statsBlock =
     '### 📊 ' + L('profile_overview') + '\n' +
-    playerRank.emoji + ' **' + L('profile_rank') + '** · **' + rankName + '** · ' + L('profile_score') + ' `' + playerRank.score + '`\n' +
+    playerRank.emoji + ' **' + L('profile_rank') + '** · **' + rankName + '** · ' + L('profile_score') + ' ' + TICK + playerRank.score + TICK + '\n' +
     '_' + rankNextLine + '_\n' +
-    '💰 **' + L('profile_iene') + '** · `' + iene.toLocaleString('pt-BR') + '`\n' +
+    '💰 **' + L('profile_iene') + '** · ' + TICK + iene.toLocaleString('pt-BR') + TICK + '\n' +
     '📋 **' + L('profile_eleven') + '** · ' + elevenLabel + '\n' +
-    '📔 **' + L('profile_binder') + '** · **' + owned + '/' + poolSize + '** (`' + binderPct + '%`)' +
-    (remaining > 0 ? ' · `' + remaining + '` ' + L('profile_left') : ' · ' + L('profile_done')) + '\n' +
+    '📔 **' + L('profile_binder') + '** · **' + owned + '/' + poolSize + '** (' + TICK + binderPct + '%' + TICK + ')' +
+    (remaining > 0 ? ' · ' + TICK + remaining + TICK + ' ' + L('profile_left') : ' · ' + L('profile_done')) + '\n' +
     bannerBinder +
     (almost ? '\n\n' + almost : '') +
     '\n' + shapeLine;
@@ -145,7 +146,7 @@ function buildProfilePayload(targetUser, viewerId) {
         const entry = teamBySlot.get(slotKey);
         if (!entry) return '⬜';
         const head = emojiTag(getEmojiForCard(entry.cardId)) || '👤';
-        return head + '`' + entry.level + '`;
+        return head + TICK + entry.level + TICK;
       }).join('   ');
       return '**' + line.name + '**\n' + cells;
     }).join('\n\n');
@@ -169,7 +170,7 @@ function buildProfilePayload(targetUser, viewerId) {
     }).length;
     const pct = Math.round((ownedInTier / totalInTier) * 100);
     return RARITIES[key].emoji + ' **' + rarityLabel(viewerId, key) + '**  ' +
-      miniBar(ownedInTier, totalInTier, 8) + '  **' + ownedInTier + '**/' + totalInTier + ' (`' + pct + '%)';
+      miniBar(ownedInTier, totalInTier, 8) + '  **' + ownedInTier + '**/' + totalInTier + ' (' + TICK + pct + '%' + TICK + ')';
   }).filter(Boolean);
 
   const coachTotal = cards.filter(c => c.position === 'CO').length;
@@ -181,7 +182,7 @@ function buildProfilePayload(targetUser, viewerId) {
     const pct = Math.round((coachOwned / coachTotal) * 100);
     tierLines.push(
       '🎩 **' + L('profile_masters') + '**  ' + miniBar(coachOwned, coachTotal, 8) +
-      '  **' + coachOwned + '**/' + coachTotal + ' (`' + pct + '%)'
+      '  **' + coachOwned + '**/' + coachTotal + ' (' + TICK + pct + '%' + TICK + ')'
     );
   }
 
