@@ -45,14 +45,14 @@ function accentInt() {
 }
 
 function miniBar(current, total, length) {
-  if (length == null) length = 8;
+  if (length == null) length = 6;
   if (total <= 0) return '▱'.repeat(length);
   const ratio = Math.max(0, Math.min(1, current / total));
   const filled = Math.round(ratio * length);
   return '▰'.repeat(filled) + '▱'.repeat(length - filled);
 }
 
-function buildProfilePayload(targetUser, viewerId) {
+function loadProfileData(targetUser, viewerId) {
   const userId = targetUser.id;
   const username = targetUser.username;
   const displayName = targetUser.globalName || targetUser.displayName || username;
@@ -97,167 +97,215 @@ function buildProfilePayload(targetUser, viewerId) {
   const rankName = rankLabel(viewerId, playerRank.key);
   const nextRankName = playerRank.next ? rankLabel(viewerId, playerRank.next.key) : null;
 
+  return {
+    userId: userId,
+    username: username,
+    displayName: displayName,
+    isSelf: isSelf,
+    avatarURL: avatarURL,
+    L: L,
+    cards: cards,
+    userCards: userCards,
+    iene: iene,
+    teamRows: teamRows,
+    lines: lines,
+    coachId: coachId,
+    formation: formation,
+    coachCard: coachCard,
+    coachEmoji: coachEmoji,
+    masterPassive: masterPassive,
+    poolSize: poolSize,
+    owned: owned,
+    remaining: remaining,
+    binderPct: binderPct,
+    isCollectionComplete: isCollectionComplete,
+    isTeamComplete: isTeamComplete,
+    avgLevel: avgLevel,
+    staffTitles: staffTitles,
+    playerRank: playerRank,
+    rankName: rankName,
+    nextRankName: nextRankName
+  };
+}
+
+function buildMainView(d, viewerId) {
   const badgeParts = [];
-  for (const st of staffTitles) badgeParts.push(st.emoji + ' **' + st.label + '**');
-  badgeParts.push(playerRank.emoji + ' **' + rankName + '**');
-  if (isCollectionComplete) badgeParts.push('🏁 **' + L('profile_full_binder') + '**');
-  if (isTeamComplete) badgeParts.push('✅ **' + L('profile_eleven_ready') + '**');
-  if (coachCard) badgeParts.push((coachEmoji || '🎩') + ' **' + coachCard.name + '**');
+  for (const st of d.staffTitles) badgeParts.push(st.emoji + ' **' + st.label + '**');
+  badgeParts.push(d.playerRank.emoji + ' **' + d.rankName + '**');
+  if (d.isCollectionComplete) badgeParts.push('🏁 **' + d.L('profile_full_binder') + '**');
+  if (d.isTeamComplete) badgeParts.push('✅ **' + d.L('profile_eleven_ready') + '**');
 
-  let titleBlock = '# ' + (isCollectionComplete ? '🏁' : '🧬') + ' ' + displayName;
-  if (displayName !== username) titleBlock += '\n' + TICK + '@' + username + TICK;
-  if (!isSelf) titleBlock += '\n-# ' + L('profile_viewing') + ' **' + displayName + '**';
-  if (badgeParts.length) titleBlock += '\n' + badgeParts.join(' · ');
+  let header =
+    '# ' + (d.isCollectionComplete ? '🏁' : '🧬') + ' ' + d.displayName;
+  if (d.displayName !== d.username) header += '\n' + TICK + '@' + d.username + TICK;
+  if (!d.isSelf) header += '\n-# ' + d.L('profile_viewing');
+  if (badgeParts.length) header += '\n' + badgeParts.join(' · ');
 
-  const rankNextLine = playerRank.next
-    ? L('profile_next') + ' **' + playerRank.next.emoji + ' ' + nextRankName + '** · ' + TICK + playerRank.progressToNext + '%' + TICK
-    : L('profile_max_rank');
+  const elevenBit = d.teamRows.length === 0
+    ? d.L('profile_vacant')
+    : '**' + d.teamRows.length + '/11**' + (d.avgLevel > 0 ? ' · média **' + d.avgLevel + '**' : '');
 
-  const elevenLabel = teamRows.length === 0
-    ? (isSelf ? L('profile_vacant') + ' · ' + TICK + '/team' + TICK : L('profile_vacant'))
-    : '**' + teamRows.length + '/11**' + (isTeamComplete ? ' ' + L('profile_ready') : '') +
-      (avgLevel > 0 ? ' · ' + L('profile_avg') + ' **' + avgLevel + '**' : '');
+  const rankBit = d.playerRank.next
+    ? d.rankName + ' · próximo **' + d.nextRankName + '** `' + d.playerRank.progressToNext + '%`'
+    : d.rankName + ' · ' + d.L('profile_max_rank');
 
-  const bannerBinder = binderByBannerLines(userId, cards, userCards);
-  const almost = almostCompleteLines(userId, cards, userCards);
+  const masterBit = d.coachCard
+    ? (d.coachEmoji || '🎩') + ' **' + d.coachCard.name + '**'
+    : d.L('profile_no_master');
 
-  let shapeLine =
-    '**' + L('profile_shape') + '** · **' + formation.label + '**' +
-    (coachCard ? ' · ' + (coachEmoji || '🎩') + ' ' + coachCard.name : ' · ' + L('profile_no_master'));
-  if (masterPassive) shapeLine += '\n_' + masterPassive + '_';
-
-  const statsBlock =
-    '### 📊 ' + L('profile_overview') + '\n' +
-    playerRank.emoji + ' **' + L('profile_rank') + '** · **' + rankName + '** · ' + L('profile_score') + ' ' + TICK + playerRank.score + TICK + '\n' +
-    '_' + rankNextLine + '_\n' +
-    '💰 **' + L('profile_iene') + '** · ' + TICK + iene.toLocaleString('pt-BR') + TICK + '\n' +
-    '📋 **' + L('profile_eleven') + '** · ' + elevenLabel + '\n' +
-    '📔 **' + L('profile_binder') + '** · **' + owned + '/' + poolSize + '** (' + TICK + binderPct + '%' + TICK + ')' +
-    (remaining > 0 ? ' · ' + TICK + remaining + TICK + ' ' + L('profile_left') : ' · ' + L('profile_done')) + '\n' +
-    bannerBinder +
-    (almost ? '\n\n' + almost : '') +
-    '\n' + shapeLine;
-
-  let pitchBlock;
-  if (teamRows.length > 0) {
-    const teamBySlot = new Map(teamRows.map(row => [row.slot, row]));
-    const squadPreview = lines.map(line => {
-      const cells = line.slots.map(slotKey => {
-        const entry = teamBySlot.get(slotKey);
-        if (!entry) return '⬜';
-        const head = emojiTag(getEmojiForCard(entry.cardId)) || '👤';
-        return head + TICK + entry.level + TICK;
-      }).join('   ');
-      return '**' + line.name + '**\n' + cells;
-    }).join('\n\n');
-    const rankBlock = whoNeedsXpLines(userId, teamRows, 3) || '—';
-    pitchBlock =
-      '### ⚽ ' + L('profile_pitch') + '\n' + safeTruncate(squadPreview, 1200) + '\n\n' +
-      '### 📈 ' + L('profile_who_xp') + '\n' + rankBlock;
-  } else {
-    pitchBlock =
-      '### ⚽ ' + L('profile_pitch') + '\n' +
-      '_' + (isSelf ? L('profile_empty_pitch') : L('profile_no_shape')) + '_';
-  }
-
-  const binderBar = progressBar(owned, poolSize, 14);
-  const tierLines = RARITY_ORDER.map(key => {
-    const totalInTier = cards.filter(c => c.rarity === key && c.position !== 'CO').length;
-    if (totalInTier === 0) return null;
-    const ownedInTier = userCards.filter(uc => {
-      const card = cards.find(c => c.id === uc.id);
-      return card && card.position !== 'CO' && card.rarity === key;
-    }).length;
-    const pct = Math.round((ownedInTier / totalInTier) * 100);
-    return RARITIES[key].emoji + ' **' + rarityLabel(viewerId, key) + '**  ' +
-      miniBar(ownedInTier, totalInTier, 8) + '  **' + ownedInTier + '**/' + totalInTier + ' (' + TICK + pct + '%' + TICK + ')';
-  }).filter(Boolean);
-
-  const coachTotal = cards.filter(c => c.position === 'CO').length;
-  if (coachTotal > 0) {
-    const coachOwned = userCards.filter(uc => {
-      const card = cards.find(c => c.id === uc.id);
-      return card && card.position === 'CO';
-    }).length;
-    const pct = Math.round((coachOwned / coachTotal) * 100);
-    tierLines.push(
-      '🎩 **' + L('profile_masters') + '**  ' + miniBar(coachOwned, coachTotal, 8) +
-      '  **' + coachOwned + '**/' + coachTotal + ' (' + TICK + pct + '%' + TICK + ')'
-    );
-  }
-
-  const recent = recentPullsLines(userId, 5);
-  const binderBlock =
-    '### 📔 ' + L('profile_binder') + '\n' +
-    (isCollectionComplete
-      ? '🏁 **' + L('profile_full_set') + '**\n' + binderBar
-      : binderBar) +
-    '\n\n### 🏷️ ' + L('profile_tiers') + '\n' + (tierLines.join('\n') || '—') +
-    '\n\n### 📜 ' + L('profile_last_pulls') + '\n' + recent;
-
-  const footerNote = isSelf
-    ? '_' + L('profile_footer_self') + '_'
-    : '_' + L('profile_footer_other') + '_';
+  const body =
+    d.playerRank.emoji + ' **Rank** · ' + rankBit + '\n' +
+    '💰 **Iene** · `' + d.iene.toLocaleString('pt-BR') + '`  ·  📋 **Onze** · ' + elevenBit + '\n' +
+    '📔 **Binder** · **' + d.owned + '/' + d.poolSize + '** (`' + d.binderPct + '%`)' +
+    (d.remaining > 0 ? ' · faltam `' + d.remaining + '`' : ' · completo') + '\n' +
+    '🏷️ **Formação** · **' + d.formation.label + '** · ' + masterBit;
 
   const container = new ContainerBuilder()
-    .setAccentColor(isCollectionComplete ? 0x57f287 : accentInt());
+    .setAccentColor(d.isCollectionComplete ? 0x57f287 : accentInt());
 
   container.addSectionComponents(
     new SectionBuilder()
-      .addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(safeTruncate(titleBlock, 1800))
-      )
+      .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(header, 900)))
       .setThumbnailAccessory(
-        new ThumbnailBuilder()
-          .setURL(avatarURL)
-          .setDescription(displayName)
+        new ThumbnailBuilder().setURL(d.avatarURL).setDescription(d.displayName)
       )
   );
 
   container
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(statsBlock, 2200)))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(pitchBlock, 2800)))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(safeTruncate(binderBlock + '\n\n' + footerNote, 3200))
-    );
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(body, 1200)));
 
-  if (isSelf) {
-    container
-      .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-      .addActionRowComponents(
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:collection')
-            .setLabel(L('profile_btn_binder'))
-            .setEmoji('📔')
-            .setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder()
-            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:team')
-            .setLabel(L('profile_btn_eleven'))
-            .setEmoji('📋')
-            .setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder()
-            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:banners')
-            .setLabel(L('profile_btn_banner'))
-            .setEmoji('🎴')
-            .setStyle(ButtonStyle.Primary),
-          new ButtonBuilder()
-            .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':share')
-            .setLabel(L('profile_btn_share'))
-            .setEmoji('📣')
-            .setStyle(ButtonStyle.Success)
-        )
-      );
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':details')
+      .setLabel('Detalhes')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:collection')
+      .setLabel(d.L('profile_btn_binder'))
+      .setEmoji('📔')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:team')
+      .setLabel(d.L('profile_btn_eleven'))
+      .setEmoji('📋')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:banners')
+      .setLabel(d.L('profile_btn_banner'))
+      .setEmoji('🎴')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  if (d.isSelf) {
+    row1.addComponents(
+      new ButtonBuilder()
+        .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':share')
+        .setLabel(d.L('profile_btn_share'))
+        .setEmoji('📣')
+        .setStyle(ButtonStyle.Success)
+    );
   }
 
-  return { container: container, isSelf: isSelf };
+  container
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addActionRowComponents(row1);
+
+  return container;
+}
+
+function buildDetailsView(d, viewerId) {
+  let pitch;
+  if (d.teamRows.length > 0) {
+    const teamBySlot = new Map(d.teamRows.map(row => [row.slot, row]));
+    const squadPreview = d.lines.map(line => {
+      const cells = line.slots.map(slotKey => {
+        const entry = teamBySlot.get(slotKey);
+        if (!entry) return '⬜';
+        const head = emojiTag(getEmojiForCard(entry.cardId)) || '👤';
+        return head + TICK + entry.level + TICK;
+      }).join(' ');
+      return '**' + line.name + '** ' + cells;
+    }).join('\n');
+    const xp = whoNeedsXpLines(d.userId, d.teamRows, 3) || '—';
+    pitch = '### ⚽ Campo\n' + safeTruncate(squadPreview, 600) + '\n\n### 📈 Subir nível\n' + xp;
+  } else {
+    pitch = '### ⚽ Campo\n_' + (d.isSelf ? d.L('profile_empty_pitch') : d.L('profile_no_shape')) + '_';
+  }
+
+  const tierLines = RARITY_ORDER.map(key => {
+    const totalInTier = d.cards.filter(c => c.rarity === key && c.position !== 'CO').length;
+    if (totalInTier === 0) return null;
+    const ownedInTier = d.userCards.filter(uc => {
+      const card = d.cards.find(c => c.id === uc.id);
+      return card && card.position !== 'CO' && card.rarity === key;
+    }).length;
+    return RARITIES[key].emoji + ' **' + rarityLabel(viewerId, key) + '** ' +
+      miniBar(ownedInTier, totalInTier, 6) + ' **' + ownedInTier + '**/' + totalInTier;
+  }).filter(Boolean);
+
+  const coachTotal = d.cards.filter(c => c.position === 'CO').length;
+  if (coachTotal > 0) {
+    const coachOwned = d.userCards.filter(uc => {
+      const card = d.cards.find(c => c.id === uc.id);
+      return card && card.position === 'CO';
+    }).length;
+    tierLines.push('🎩 **' + d.L('profile_masters') + '** ' + miniBar(coachOwned, coachTotal, 6) +
+      ' **' + coachOwned + '**/' + coachTotal);
+  }
+
+  const recent = recentPullsLines(d.userId, 5);
+  const binderBar = progressBar(d.owned, d.poolSize, 12);
+
+  const body =
+    pitch + '\n\n' +
+    '### 📔 Binder\n' + binderBar + ' **' + d.owned + '/' + d.poolSize + '**\n\n' +
+    '### 🏷️ Tiers\n' + (tierLines.join('\n') || '—') + '\n\n' +
+    '### 📜 Últimos pulls\n' + recent;
+
+  const container = new ContainerBuilder()
+    .setAccentColor(d.isCollectionComplete ? 0x57f287 : accentInt());
+
+  container
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        safeTruncate('# Detalhes · ' + d.displayName, 200)
+      )
+    )
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(body, 3500)))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':main')
+          .setLabel('Voltar')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:collection')
+          .setLabel(d.L('profile_btn_binder'))
+          .setEmoji('📔')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:team')
+          .setLabel(d.L('profile_btn_eleven'))
+          .setEmoji('📋')
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+
+  return container;
+}
+
+function buildProfilePayload(targetUser, viewerId, view) {
+  if (view == null) view = 'main';
+  const d = loadProfileData(targetUser, viewerId);
+  const container = view === 'details' ? buildDetailsView(d, viewerId) : buildMainView(d, viewerId);
+  return { container: container, isSelf: d.isSelf, view: view };
 }
 
 async function openProfilePanel(interaction, userId, targetUser) {
-  const built = buildProfilePayload(targetUser, userId);
+  const built = buildProfilePayload(targetUser, userId, 'main');
   try {
     await interaction.editReply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
   } catch (e) {
@@ -289,12 +337,12 @@ module.exports = {
       const target = interaction.options.getUser('user') || interaction.user;
       if (target.bot) {
         await interaction.reply({
-          embeds: [buildStatusEmbed('WARNING', t(interaction.user.id, 'col_bots') || 'Contas automaticas nao jogam', config.MESSAGES.BOTS_DONT_PLAY || 'Escolha uma pessoa.')],
+          embeds: [buildStatusEmbed('WARNING', 'Contas automaticas nao jogam', config.MESSAGES.BOTS_DONT_PLAY || 'Escolha uma pessoa.')],
           flags: 64
         });
         return;
       }
-      const built = buildProfilePayload(target, interaction.user.id);
+      const built = buildProfilePayload(target, interaction.user.id, 'main');
       await interaction.reply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
       await maybeSendDmHint(interaction);
     } catch (error) {
@@ -321,8 +369,19 @@ module.exports = {
       return;
     }
 
+    if (action === 'details' || action === 'main') {
+      await interaction.deferUpdate();
+      try {
+        const built = buildProfilePayload(interaction.user, ownerId, action === 'details' ? 'details' : 'main');
+        await interaction.editReply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
+      } catch (error) {
+        logger.error('Error toggling profile view', error.message);
+      }
+      return;
+    }
+
     if (action === 'share') {
-      const built = buildProfilePayload(interaction.user, ownerId);
+      const built = buildProfilePayload(interaction.user, ownerId, 'main');
       try {
         await interaction.reply({
           components: [built.container],
