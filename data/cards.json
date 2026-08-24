@@ -65,7 +65,7 @@
     "trait": "Complete Field Control & Vision",
     "stats": { "speed": 8, "technique": 10, "physique": 8, "tactical": 10 },
     "info": "Already competing at the top professional level, years ahead of his peers. Everything about his game is deliberate — nothing is left to instinct.",
-    "localImage": "sae.gif",
+    "localImage": "cards/sae.png",
     "icon": "sae.png",
     "rarity": "NEW_GEN"
   },
