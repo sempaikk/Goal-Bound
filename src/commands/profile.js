@@ -21,7 +21,7 @@ const config = require('../config/config.js');
 const DataService = require('../services/DataService.js');
 const { RARITIES, RARITY_ORDER } = require('../services/rarities.js');
 const { buildStatusEmbed } = require('../utils/statusEmbed.js');
-const { progressBar, emojiTag, safeTruncate } = require('../utils/format.js');
+const { emojiTag, safeTruncate } = require('../utils/format.js');
 const { getEmojiForCard } = require('../services/characterEmojis.js');
 const { maybeSendDmHint } = require('../services/dmNotifier.js');
 const { getSquadLines } = require('../utils/squadLines.js');
@@ -35,22 +35,22 @@ const { whoNeedsXpLines, recentPullsLines } = require('../utils/qolText.js');
 const { withPtBr, optionPtBr } = require('../utils/slashLocale.js');
 
 /**
- * /profile — reescrito do zero.
- * Identidade Goal Bound (não copia Arena).
- * UI 100% português do Brasil.
+ * /profile — padrão discord-bot-ui (clareza · densidade · fluxo)
  *
- * Hierarquia:
- *   Header (nome + rank + avatar)
- *   Status (iene / onze / binder / formação)
- *   Blocos Coleção e Time com atalho
- *   Galeria de cartas em destaque
- *   Progressão por raridade
- *   XP e últimos pulls
- *   Ações
+ * Zonas (como dashboards de bots top):
+ * 1. Identidade   — quem é
+ * 2. Números      — o que importa agora (1 bloco)
+ * 3. Atalhos      — coleção / time com CTA colado
+ * 4. Apoio        — raridades (compacto)
+ * 5. Mídia        — até 3 cartas
+ * 6. Ações        — sempre no mesmo lugar
+ *
+ * Detalhes (2ª tela) = campo + XP + pulls (não polui a principal)
+ * UI 100% PT-BR
  */
 
 const PREFIX = 'profile';
-const ICONS_DIR = path.join(__dirname, '..', '..', 'data', 'icons');
+const ICONS = path.join(__dirname, '..', '..', 'data', 'icons');
 
 const RANK_PT = {
   ROOKIE: 'Novato',
@@ -85,6 +85,15 @@ function btn(id, label, style, emoji) {
   return b;
 }
 
+function sep() {
+  return new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small);
+}
+
+function text(s) {
+  return new TextDisplayBuilder().setContent(String(s ?? ''));
+}
+
+/* ── dados ──────────────────────────────────────────────── */
 function loadData(targetUser, viewerId) {
   const userId = targetUser.id;
   const username = targetUser.username;
@@ -123,8 +132,6 @@ function loadData(targetUser, viewerId) {
     teamAvgLevel: avgLevel,
     teamSize: teamRows.length
   });
-  const rankName = RANK_PT[playerRank.key] || playerRank.key;
-  const nextRankName = playerRank.next ? (RANK_PT[playerRank.next.key] || playerRank.next.key) : null;
 
   return {
     userId,
@@ -149,19 +156,38 @@ function loadData(targetUser, viewerId) {
     avgLevel,
     staffTitles,
     playerRank,
-    rankName,
-    nextRankName
+    rankName: RANK_PT[playerRank.key] || playerRank.key,
+    nextRankName: playerRank.next ? (RANK_PT[playerRank.next.key] || playerRank.next.key) : null
   };
 }
 
-function findCard(uc, cards) {
+function cardOf(uc, cards) {
   return cards.find(c => c.id === uc.id) || null;
+}
+
+function tierLines(d) {
+  const lines = RARITY_ORDER.map(key => {
+    const total = d.cards.filter(c => c.rarity === key && c.position !== 'CO').length;
+    if (!total) return null;
+    const have = d.userCards.filter(uc => {
+      const c = cardOf(uc, d.cards);
+      return c && c.position !== 'CO' && c.rarity === key;
+    }).length;
+    const em = RARITIES[key]?.emoji || '·';
+    return `${em} **${RARITY_PT[key] || key}**  ${bar(have, total, 8)}  \`${have}/${total}\``;
+  }).filter(Boolean);
+
+  const coachTotal = d.cards.filter(c => c.position === 'CO').length;
+  if (coachTotal) {
+    const have = d.userCards.filter(uc => cardOf(uc, d.cards)?.position === 'CO').length;
+    lines.push(`🎩 **Masters**  ${bar(have, coachTotal, 8)}  \`${have}/${coachTotal}\``);
+  }
+  return lines;
 }
 
 function buildGallery(d) {
   const picks = [];
   const seen = new Set();
-
   for (const row of d.teamRows) {
     const card = d.cards.find(c => c.id === row.cardId);
     if (!card?.icon || seen.has(card.id)) continue;
@@ -171,7 +197,7 @@ function buildGallery(d) {
   }
   if (picks.length < 3) {
     for (const uc of d.userCards) {
-      const card = findCard(uc, d.cards);
+      const card = cardOf(uc, d.cards);
       if (!card?.icon || seen.has(card.id)) continue;
       picks.push(card);
       seen.add(card.id);
@@ -182,182 +208,155 @@ function buildGallery(d) {
   const files = [];
   const gallery = new MediaGalleryBuilder();
   for (const card of picks) {
-    const full = path.join(ICONS_DIR, card.icon);
+    const full = path.join(ICONS, card.icon);
     if (!fs.existsSync(full)) continue;
     const name = `perfil_${card.id}.png`;
     files.push(new AttachmentBuilder(full, { name }));
     gallery.addItems(
-      new MediaGalleryItemBuilder()
-        .setURL(`attachment://${name}`)
-        .setDescription(`${card.name}`)
+      new MediaGalleryItemBuilder().setURL(`attachment://${name}`).setDescription(card.name)
     );
   }
   return { gallery: files.length ? gallery : null, files };
 }
 
-function headerSection(d) {
-  const tags = [];
-  for (const s of d.staffTitles) tags.push(`${s.emoji} **${s.label}**`);
-  tags.push(`${d.playerRank.emoji} **${d.rankName}**`);
-  if (d.fullBinder) tags.push('**Binder completo**');
-  if (d.fullTeam) tags.push('**Onze pronto**');
+/* ── zonas de UI ────────────────────────────────────────── */
+
+/** 1. Identidade */
+function zoneIdentity(d) {
+  const badges = [];
+  for (const s of d.staffTitles) badges.push(`${s.emoji} ${s.label}`);
+  badges.push(`${d.playerRank.emoji} **${d.rankName}**`);
+  if (d.fullBinder) badges.push('Binder completo');
+  if (d.fullTeam) badges.push('Onze pronto');
 
   const sub = d.isSelf
-    ? `-# @${d.username} · este é o seu perfil`
-    : `-# @${d.username} · perfil de outro jogador`;
+    ? `-# @${d.username} · seu perfil`
+    : `-# @${d.username} · perfil consultado`;
 
   return new SectionBuilder()
     .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`# ${d.displayName}`),
-      new TextDisplayBuilder().setContent(sub),
-      new TextDisplayBuilder().setContent(safeTruncate(tags.join(' · ') || '—', 800))
+      text(`# ${d.displayName}`),
+      text(sub),
+      text(safeTruncate(badges.join(' · '), 700))
     )
     .setThumbnailAccessory(
       new ThumbnailBuilder().setURL(d.avatarURL).setDescription(d.displayName)
     );
 }
 
-/** Visão principal — uma tela legível, densa e organizada */
-function buildMain(d, viewerId) {
-  const ieneStr = Number(d.iene || 0).toLocaleString('pt-BR');
+/** 2. Números — um bloco só, escaneável */
+function zoneNumbers(d) {
+  const iene = Number(d.iene || 0).toLocaleString('pt-BR');
+  const rankLine = d.nextRankName
+    ? `**${d.rankName}** → **${d.nextRankName}**  ·  \`${d.playerRank.progressToNext}%\`\n${bar(d.playerRank.progressToNext, 100, 12)}`
+    : `**${d.rankName}**  ·  rank máximo`;
 
-  // Bloco status (números importantes em code)
-  const status = [
-    '## Status',
-    `**Rank** · ${d.rankName}` +
-      (d.nextRankName
-        ? ` · próximo **${d.nextRankName}** · \`${d.playerRank.progressToNext}%\``
-        : ' · **rank máximo**'),
-    `**Iene** \`${ieneStr}\`  ·  **Onze** \`${d.teamRows.length}/11\`  ·  **Média** \`Lv.${d.avgLevel || 0}\``,
-    `**Binder** \`${d.owned}/${d.poolSize}\` · \`${d.binderPct}%\`` +
-      (d.remaining > 0 ? ` · faltam \`${d.remaining}\`` : ' · **completo**'),
-    `**Formação** · **${d.formation.label}**  ·  **Master** · ${d.coachCard ? `**${d.coachCard.name}**` : '*nenhum*'}`
+  return [
+    `## Resumo`,
+    rankLine,
+    '',
+    `💰 \`${iene}\` Iene    ·    👕 \`${d.teamRows.length}/11\`    ·    📊 \`Lv.${d.avgLevel || 0}\``,
+    `📔 \`${d.owned}/${d.poolSize}\` binder \`(${d.binderPct}%)\`` +
+      (d.remaining > 0 ? `  ·  faltam \`${d.remaining}\`` : '  ·  **completo**'),
+    `📐 **${d.formation.label}**  ·  Master: ${d.coachCard ? `**${d.coachCard.name}**` : '*nenhum*'}`
   ].join('\n');
+}
 
-  const colecao = new SectionBuilder()
+/** 3. Atalhos com CTA colado no dado */
+function zoneCollection(d, viewerId) {
+  const body = d.owned === 0
+    ? '_Binder vazio._\n-# Recrute no Banner para começar.'
+    : `**${d.owned}/${d.poolSize}**  ${bar(d.owned, d.poolSize, 10)}\n-# ${d.remaining > 0 ? `Faltam **${d.remaining}**` : 'Coleção fechada.'}`;
+
+  return new SectionBuilder()
     .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent('### Coleção'),
-      new TextDisplayBuilder().setContent(
-        `**${d.owned}/${d.poolSize}** cartas\n${bar(d.owned, d.poolSize, 12)}\n-# ${d.remaining > 0 ? `Faltam **${d.remaining}** para fechar o binder.` : 'Você já tem todas as cartas.'}`
-      )
+      text('### Coleção'),
+      text(body)
     )
     .setButtonAccessory(
-      btn(`${PREFIX}:${viewerId}:goto:collection`, 'Abrir binder', ButtonStyle.Primary)
+      btn(`${PREFIX}:${viewerId}:goto:collection`, 'Binder', ButtonStyle.Primary)
     );
+}
 
-  const time = new SectionBuilder()
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent('### Time'),
-      new TextDisplayBuilder().setContent(
-        `**${d.teamRows.length}/11** em campo · média **Lv.${d.avgLevel || 0}**\n` +
-        `Formação **${d.formation.label}**\n` +
-        `Master: ${d.coachCard ? `**${d.coachCard.name}**` : '*não definido*'}` +
-        (d.masterPassive ? `\n-# ${d.masterPassive}` : '')
-      )
-    )
-    .setButtonAccessory(
-      btn(`${PREFIX}:${viewerId}:goto:team`, 'Abrir time', ButtonStyle.Primary)
-    );
-
-  // Progressão por raridade
-  const tiers = RARITY_ORDER.map(key => {
-    const total = d.cards.filter(c => c.rarity === key && c.position !== 'CO').length;
-    if (!total) return null;
-    const have = d.userCards.filter(uc => {
-      const c = findCard(uc, d.cards);
-      return c && c.position !== 'CO' && c.rarity === key;
-    }).length;
-    const em = RARITIES[key]?.emoji || '·';
-    const label = RARITY_PT[key] || key;
-    return `${em} **${label}** · ${bar(have, total, 8)} \`${have}/${total}\``;
-  }).filter(Boolean);
-
-  const coachTotal = d.cards.filter(c => c.position === 'CO').length;
-  if (coachTotal) {
-    const coachHave = d.userCards.filter(uc => findCard(uc, d.cards)?.position === 'CO').length;
-    tiers.push(`🎩 **Masters** · ${bar(coachHave, coachTotal, 8)} \`${coachHave}/${coachTotal}\``);
+function zoneTeam(d, viewerId) {
+  let body;
+  if (d.teamRows.length === 0) {
+    body = '_Campo vazio._\n-# Monte o onze para ganhar XP.';
+  } else {
+    body =
+      `**${d.teamRows.length}/11**  ·  média **Lv.${d.avgLevel || 0}**\n` +
+      `**${d.formation.label}**` +
+      (d.coachCard ? `  ·  **${d.coachCard.name}**` : '') +
+      (d.masterPassive ? `\n-# ${d.masterPassive}` : '');
   }
 
-  const xpBlock = whoNeedsXpLines(d.userId, d.teamRows, 3) || 'Ninguém no onze precisa de XP agora.';
-  const pulls = recentPullsLines(d.userId, 3) || 'Nenhum pull recente.';
+  return new SectionBuilder()
+    .addTextDisplayComponents(
+      text('### Time'),
+      text(body)
+    )
+    .setButtonAccessory(
+      btn(`${PREFIX}:${viewerId}:goto:team`, 'Time', ButtonStyle.Primary)
+    );
+}
 
+/** 4. Raridades — compacto */
+function zoneTiers(d) {
+  const lines = tierLines(d);
+  if (!lines.length) return '### Progressão\n—';
+  return `### Progressão\n${lines.join('\n')}`;
+}
+
+/* ── montagem ───────────────────────────────────────────── */
+
+function buildMain(d, viewerId) {
   const { gallery, files } = buildGallery(d);
 
   const container = new ContainerBuilder()
     .setAccentColor(d.fullBinder ? 0x57f287 : accent())
-    .addSectionComponents(headerSection(d))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(status, 1800)))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addSectionComponents(colecao, time);
+    .addSectionComponents(zoneIdentity(d))
+    .addSeparatorComponents(sep())
+    .addTextDisplayComponents(text(safeTruncate(zoneNumbers(d), 1600)))
+    .addSeparatorComponents(sep())
+    .addSectionComponents(zoneCollection(d, viewerId), zoneTeam(d, viewerId))
+    .addSeparatorComponents(sep())
+    .addTextDisplayComponents(text(safeTruncate(zoneTiers(d), 1200)));
 
   if (gallery) {
     container
-      .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-      .addTextDisplayComponents(new TextDisplayBuilder().setContent('### Em destaque'))
+      .addSeparatorComponents(sep())
+      .addTextDisplayComponents(text('### Destaques'))
       .addMediaGalleryComponents(gallery);
   }
 
   container
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### Progressão\n${tiers.join('\n') || '—'}`
+    .addSeparatorComponents(sep())
+    .addTextDisplayComponents(text('-# Goal Bound'))
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        ...[
+          btn(`${PREFIX}:${viewerId}:details`, 'Detalhes', ButtonStyle.Secondary),
+          btn(`${PREFIX}:${viewerId}:goto:banners`, 'Banner', ButtonStyle.Secondary),
+          btn(`${PREFIX}:${viewerId}:goto:daily`, 'Daily', ButtonStyle.Secondary),
+          d.isSelf ? btn(`${PREFIX}:${viewerId}:share`, 'Compartilhar', ButtonStyle.Success) : null
+        ].filter(Boolean).slice(0, 5)
       )
-    )
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`### Quem precisa de XP\n${safeTruncate(xpBlock, 700)}`),
-      new TextDisplayBuilder().setContent(`### Últimos pulls\n${safeTruncate(pulls, 700)}`)
-    )
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent('-# Goal Bound · `/daily` · `/banners` · `/team` · `/collection`')
     );
-
-  // Ações no rodapé
-  const actions = [
-    btn(`${PREFIX}:${viewerId}:details`, 'Campo e detalhes', ButtonStyle.Secondary),
-    btn(`${PREFIX}:${viewerId}:goto:banners`, 'Banner', ButtonStyle.Secondary),
-    btn(`${PREFIX}:${viewerId}:goto:daily`, 'Daily', ButtonStyle.Secondary)
-  ];
-  if (d.isSelf) {
-    actions.push(btn(`${PREFIX}:${viewerId}:share`, 'Compartilhar', ButtonStyle.Success));
-  }
-  container.addActionRowComponents(new ActionRowBuilder().addComponents(...actions.slice(0, 5)));
 
   return { container, files };
 }
 
-/** Segunda tela: campo + tiers + XP detalhado */
 function buildDetails(d, viewerId) {
   const bySlot = new Map(d.teamRows.map(r => [r.slot, r]));
   const pitch = d.teamRows.length
     ? d.lines.map(line => {
         const cells = line.slots.map(slot => {
           const e = bySlot.get(slot);
-          return e ? `${emojiTag(getEmojiForCard(e.cardId)) || '👤'} \`Lv.${e.level}\`` : '⬜';
-        }).join('  ');
+          return e ? `${emojiTag(getEmojiForCard(e.cardId)) || '•'} \`${e.level}\`` : '⬜';
+        }).join(' ');
         return `**${line.name}**  ${cells}`;
       }).join('\n')
-    : '_Campo vazio. Monte o onze em `/team`._';
-
-  const tiers = RARITY_ORDER.map(key => {
-    const total = d.cards.filter(c => c.rarity === key && c.position !== 'CO').length;
-    if (!total) return null;
-    const have = d.userCards.filter(uc => {
-      const c = findCard(uc, d.cards);
-      return c && c.position !== 'CO' && c.rarity === key;
-    }).length;
-    const em = RARITIES[key]?.emoji || '·';
-    return `${em} **${RARITY_PT[key] || key}** · ${bar(have, total, 10)} \`${have}/${total}\``;
-  }).filter(Boolean);
-
-  const coachTotal = d.cards.filter(c => c.position === 'CO').length;
-  if (coachTotal) {
-    const coachHave = d.userCards.filter(uc => findCard(uc, d.cards)?.position === 'CO').length;
-    tiers.push(`🎩 **Masters** · ${bar(coachHave, coachTotal, 10)} \`${coachHave}/${coachTotal}\``);
-  }
+    : '_Ninguém em campo._ Use **Time** para escalar.';
 
   const xp = whoNeedsXpLines(d.userId, d.teamRows, 5) || 'Ninguém no onze precisa de XP agora.';
   const pulls = recentPullsLines(d.userId, 5) || 'Nenhum pull recente.';
@@ -365,41 +364,31 @@ function buildDetails(d, viewerId) {
 
   const container = new ContainerBuilder()
     .setAccentColor(d.fullBinder ? 0x57f287 : accent())
-    .addSectionComponents(headerSection(d))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addSectionComponents(zoneIdentity(d))
+    .addSeparatorComponents(sep())
+    .addTextDisplayComponents(text(`## Campo\n${safeTruncate(pitch, 1400)}`))
+    .addSeparatorComponents(sep())
+    .addTextDisplayComponents(text(safeTruncate(zoneTiers(d).replace('###', '##'), 1200)))
+    .addSeparatorComponents(sep())
     .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`## Campo\n${safeTruncate(pitch, 1400)}`)
-    )
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `## Progressão\n${tiers.join('\n') || '—'}\n\n**Binder** ${progressBar(d.owned, d.poolSize, 12)} **${d.binderPct}%**`
-      )
-    )
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`## Quem precisa de XP\n${safeTruncate(xp, 1000)}`)
+      text(`## Quem precisa de XP\n${safeTruncate(xp, 900)}`),
+      text(`## Últimos pulls\n${safeTruncate(pulls, 900)}`)
     );
 
   if (gallery) {
     container
-      .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-      .addTextDisplayComponents(new TextDisplayBuilder().setContent('## Cartas do onze'))
+      .addSeparatorComponents(sep())
+      .addTextDisplayComponents(text('## Cartas do onze'))
       .addMediaGalleryComponents(gallery);
   }
 
-  container
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`## Últimos pulls\n${safeTruncate(pulls, 1000)}`)
+  container.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      btn(`${PREFIX}:${viewerId}:main`, 'Voltar', ButtonStyle.Primary),
+      btn(`${PREFIX}:${viewerId}:goto:collection`, 'Binder', ButtonStyle.Secondary),
+      btn(`${PREFIX}:${viewerId}:goto:team`, 'Time', ButtonStyle.Secondary)
     )
-    .addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        btn(`${PREFIX}:${viewerId}:main`, 'Voltar', ButtonStyle.Primary),
-        btn(`${PREFIX}:${viewerId}:goto:collection`, 'Binder', ButtonStyle.Secondary),
-        btn(`${PREFIX}:${viewerId}:goto:team`, 'Time', ButtonStyle.Secondary)
-      )
-    );
+  );
 
   return { container, files };
 }
@@ -463,8 +452,7 @@ module.exports = {
         });
         return;
       }
-      const built = buildProfilePayload(target, interaction.user.id, 'main');
-      await sendBuilt(interaction, built);
+      await sendBuilt(interaction, buildProfilePayload(target, interaction.user.id, 'main'));
       await maybeSendDmHint(interaction);
     } catch (error) {
       logger.error('Erro no /profile', error.message);
@@ -495,8 +483,11 @@ module.exports = {
 
     if (action === 'details' || action === 'main') {
       await interaction.deferUpdate();
-      const built = buildProfilePayload(interaction.user, ownerId, action === 'details' ? 'details' : 'main');
-      await sendBuilt(interaction, built, true);
+      await sendBuilt(
+        interaction,
+        buildProfilePayload(interaction.user, ownerId, action === 'details' ? 'details' : 'main'),
+        true
+      );
       return;
     }
 
