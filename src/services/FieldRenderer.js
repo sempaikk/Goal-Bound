@@ -165,18 +165,17 @@ function buildOverlaySvg(teamMap, slots, formationLabel) {
   const ready = filled === 11;
   const items = slotItems(teamMap, slots);
 
-  // Labels use bitmap font — system fonts are missing in sharp/librsvg and show as tofu cubes.
+  // Empty slots: dashed card silhouette only — no bitmap text labels.
+  // (Small labels looked like random gold cubes when the glyph scale was off.)
   const emptySlots = items
     .map(({ slot, card, color }) => {
       if (card) return '';
       const x = slot.x - CARD_HALF_W;
       const y = slot.y - CARD_HALF_H;
-      const label = String(slot.label || '?').slice(0, 4).toUpperCase();
       return `
         <rect x="${x}" y="${y}" width="${CARD_W}" height="${CARD_H}" rx="14"
           fill="rgba(6,10,14,0.55)" stroke="${color.stroke}" stroke-width="2.5"
-          stroke-opacity="0.9" stroke-dasharray="6 5"/>
-        ${bitmapTextSvg(label, slot.x, slot.y, 1.8, color.stroke)}`;
+          stroke-opacity="0.9" stroke-dasharray="6 5"/>`;
     })
     .join('');
 
