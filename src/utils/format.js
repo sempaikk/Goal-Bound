@@ -31,12 +31,17 @@ function progressBar(current, total, length = 10) {
   return `${'\u25B0'.repeat(filledCount)}${'\u25B1'.repeat(emptyCount)} ${clampedCurrent}/${total} (${percent}%)`;
 }
 
+/** Discord snowflake: 17–20 digits. Stale/invalid IDs render as :name: in chat. */
 function emojiTag(emoji) {
   if (!emoji || !emoji.id || !emoji.name) return '';
-  return `<:${emoji.name}:${emoji.id}>`;
+  const id = String(emoji.id);
+  if (!/^\d{17,20}$/.test(id)) return '';
+  const name = String(emoji.name).replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32);
+  if (!name) return '';
+  return `<:${name}:${id}>`;
 }
 
-/** One glyph per role family \u2014 never reused elsewhere in UI chrome */
+/** One glyph per role family */
 const POSITION_EMOJIS = {
   GK: '\uD83E\uDD4E',
   DF: '\uD83E\uDDF1',
