@@ -22,7 +22,6 @@ const DataService = require('../services/DataService.js');
 const { renderTeam, resolveSlots } = require('../services/FieldRenderer.js');
 const { isRenderBusy } = require('../services/teamRenderCache.js');
 const { buildStatusEmbed } = require('../utils/statusEmbed.js');
-const { getEmojiForCard } = require('../services/characterEmojis.js');
 const { RARITIES } = require('../services/rarities.js');
 const { maybeSendDmHint } = require('../services/dmNotifier.js');
 const {
@@ -363,23 +362,23 @@ function buildStateBComponents(ownerId, slotKey, teamBySlot, ownedCards, slots, 
     const start = safePage * CARDS_PER_PAGE;
     const pageCards = sortedOwned.slice(start, start + CARDS_PER_PAGE);
 
+    // Unicode-only emojis in select options. Application emoji IDs that are
+    // stale / from another app make Discord reject the whole message update,
+    // so the UI never leaves state A (slot picker stuck).
     const cardOptions = pageCards.map(card => {
       const isHere = currentEntry?.cardId === card.id;
       const elsewhere = cardSlotByCardId.get(card.id);
-      const onTeam = isHere || Boolean(elsewhere);
       const rarityEmoji = RARITIES[card.rarity]?.emoji || '';
       let context;
       if (isHere) context = `✓ ${slotKey}`;
       else if (elsewhere) context = `📌 ${elsewhere}`;
       else context = `${rarityEmoji} ${card.position || ''}`.trim();
-      const customEmoji = getEmojiForCard(card.id);
-      const emoji = customEmoji || (onTeam ? '📌' : undefined);
       const labelPrefix = isHere ? '✓ ' : elsewhere ? '📌 ' : '';
       return {
         label: `${labelPrefix}${card.name}`.slice(0, 100),
         description: `Lv.${card.level} · ${context}`.slice(0, 100),
         value: String(card.id),
-        emoji,
+        emoji: isHere ? '✅' : elsewhere ? '📌' : '🃏',
         default: isHere
       };
     });
