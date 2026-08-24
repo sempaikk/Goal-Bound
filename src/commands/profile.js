@@ -9,8 +9,13 @@ const {
   SeparatorBuilder,
   SeparatorSpacingSize,
   SectionBuilder,
-  ThumbnailBuilder
+  ThumbnailBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
+  AttachmentBuilder
 } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 const logger = require('../logger/logger.js');
 const config = require('../config/config.js');
 const DataService = require('../services/DataService.js');
@@ -26,30 +31,24 @@ const { formatPassiveShort } = require('../services/coachPassives.js');
 const { getStaffTitles } = require('../services/staff.js');
 const { getPlayerRank } = require('../services/playerRank.js');
 const { openDestination } = require('../utils/nav.js');
-const { t, rankLabel, rarityLabel } = require('../utils/i18n.js');
-const {
-  binderByBannerLines,
-  almostCompleteLines,
-  whoNeedsXpLines,
-  recentPullsLines
-} = require('../utils/qolText.js');
+const { rankLabel, rarityLabel } = require('../utils/i18n.js');
+const { whoNeedsXpLines, recentPullsLines } = require('../utils/qolText.js');
 const { withPtBr, optionPtBr } = require('../utils/slashLocale.js');
 
 const CUSTOM_ID_PREFIX = 'profile';
-const TICK = '`';
+const ICONS_DIR = path.join(__dirname, '..', '..', 'data', 'icons');
 
 function accentInt() {
-  const hex = String((config.COLORS && config.COLORS.PRIMARY) || '#FF4D8D').replace('#', '');
+  const hex = String((config.COLORS && config.COLORS.PRIMARY) || '#1687FF').replace('#', '');
   const n = parseInt(hex, 16);
-  return Number.isFinite(n) ? n : 0xff4d8d;
+  return Number.isFinite(n) ? n : 0x1687ff;
 }
 
-function miniBar(current, total, length) {
-  if (length == null) length = 6;
-  if (total <= 0) return '▱'.repeat(length);
+function miniBar(current, total, length = 8) {
+  if (total <= 0) return '░'.repeat(length);
   const ratio = Math.max(0, Math.min(1, current / total));
   const filled = Math.round(ratio * length);
-  return '▰'.repeat(filled) + '▱'.repeat(length - filled);
+  return '█'.repeat(filled) + '░'.repeat(length - filled);
 }
 
 function loadProfileData(targetUser, viewerId) {
@@ -58,7 +57,6 @@ function loadProfileData(targetUser, viewerId) {
   const displayName = targetUser.globalName || targetUser.displayName || username;
   const isSelf = userId === viewerId;
   const avatarURL = targetUser.displayAvatarURL({ size: 256, extension: 'png' });
-  const L = (key, vars) => t(viewerId, key, vars);
 
   DataService.ensureUser(userId, username);
 
@@ -82,15 +80,13 @@ function loadProfileData(targetUser, viewerId) {
 
   let avgLevel = 0;
   if (teamRows.length > 0) {
-    avgLevel = Math.round(
-      teamRows.reduce((sum, row) => sum + (row.level || 0), 0) / teamRows.length
-    );
+    avgLevel = Math.round(teamRows.reduce((sum, row) => sum + (row.level || 0), 0) / teamRows.length);
   }
 
   const staffTitles = getStaffTitles(userId);
   const playerRank = getPlayerRank({
-    owned: owned,
-    poolSize: poolSize,
+    owned,
+    poolSize,
     teamAvgLevel: avgLevel,
     teamSize: teamRows.length
   });
@@ -98,238 +94,300 @@ function loadProfileData(targetUser, viewerId) {
   const nextRankName = playerRank.next ? rankLabel(viewerId, playerRank.next.key) : null;
 
   return {
-    userId: userId,
-    username: username,
-    displayName: displayName,
-    isSelf: isSelf,
-    avatarURL: avatarURL,
-    L: L,
-    cards: cards,
-    userCards: userCards,
-    iene: iene,
-    teamRows: teamRows,
-    lines: lines,
-    coachId: coachId,
-    formation: formation,
-    coachCard: coachCard,
-    coachEmoji: coachEmoji,
-    masterPassive: masterPassive,
-    poolSize: poolSize,
-    owned: owned,
-    remaining: remaining,
-    binderPct: binderPct,
-    isCollectionComplete: isCollectionComplete,
-    isTeamComplete: isTeamComplete,
-    avgLevel: avgLevel,
-    staffTitles: staffTitles,
-    playerRank: playerRank,
-    rankName: rankName,
-    nextRankName: nextRankName
+    userId,
+    username,
+    displayName,
+    isSelf,
+    avatarURL,
+    cards,
+    userCards,
+    iene,
+    teamRows,
+    lines,
+    coachId,
+    formation,
+    coachCard,
+    coachEmoji,
+    masterPassive,
+    poolSize,
+    owned,
+    remaining,
+    binderPct,
+    isCollectionComplete,
+    isTeamComplete,
+    avgLevel,
+    staffTitles,
+    playerRank,
+    rankName,
+    nextRankName
   };
 }
 
-function buildMainView(d, viewerId) {
-  const badgeParts = [];
-  for (const st of d.staffTitles) badgeParts.push(st.emoji + ' **' + st.label + '**');
-  badgeParts.push(d.playerRank.emoji + ' **' + d.rankName + '**');
-  if (d.isCollectionComplete) badgeParts.push('🏁 **' + d.L('profile_full_binder') + '**');
-  if (d.isTeamComplete) badgeParts.push('✅ **' + d.L('profile_eleven_ready') + '**');
+function button(id, label, style, emoji) {
+  const b = new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
+  if (emoji) b.setEmoji(emoji);
+  return b;
+}
 
-  let header =
-    '# ' + (d.isCollectionComplete ? '🏁' : '🧬') + ' ' + d.displayName;
-  if (d.displayName !== d.username) header += '\n' + TICK + '@' + d.username + TICK;
-  if (!d.isSelf) header += '\n-# ' + d.L('profile_viewing');
-  if (badgeParts.length) header += '\n' + badgeParts.join(' · ');
+function cardFromUserCard(userCard, cards) {
+  return cards.find(card => card.id === userCard.id) || null;
+}
 
-  const elevenBit = d.teamRows.length === 0
-    ? d.L('profile_vacant')
-    : '**' + d.teamRows.length + '/11**' + (d.avgLevel > 0 ? ' · média **' + d.avgLevel + '**' : '');
+function buildCardGallery(d) {
+  const candidates = [];
+  const used = new Set();
 
-  const rankBit = d.playerRank.next
-    ? d.rankName + ' · próximo **' + d.nextRankName + '** `' + d.playerRank.progressToNext + '%`'
-    : d.rankName + ' · ' + d.L('profile_max_rank');
+  for (const row of d.teamRows) {
+    const card = d.cards.find(c => c.id === row.cardId);
+    if (!card || !card.icon || used.has(card.id)) continue;
+    candidates.push(card);
+    used.add(card.id);
+    if (candidates.length >= 3) break;
+  }
 
-  const masterBit = d.coachCard
-    ? (d.coachEmoji || '🎩') + ' **' + d.coachCard.name + '**'
-    : d.L('profile_no_master');
+  if (candidates.length < 3) {
+    for (const userCard of d.userCards) {
+      const card = cardFromUserCard(userCard, d.cards);
+      if (!card || !card.icon || used.has(card.id)) continue;
+      candidates.push(card);
+      used.add(card.id);
+      if (candidates.length >= 3) break;
+    }
+  }
 
-  const body =
-    d.playerRank.emoji + ' **Rank** · ' + rankBit + '\n' +
-    '💰 **Iene** · `' + d.iene.toLocaleString('pt-BR') + '`  ·  📋 **Onze** · ' + elevenBit + '\n' +
-    '📔 **Binder** · **' + d.owned + '/' + d.poolSize + '** (`' + d.binderPct + '%`)' +
-    (d.remaining > 0 ? ' · faltam `' + d.remaining + '`' : ' · completo') + '\n' +
-    '🏷️ **Formação** · **' + d.formation.label + '** · ' + masterBit;
+  const files = [];
+  const gallery = new MediaGalleryBuilder();
 
-  const container = new ContainerBuilder()
-    .setAccentColor(d.isCollectionComplete ? 0x57f287 : accentInt());
+  for (const card of candidates) {
+    const fullPath = path.join(ICONS_DIR, card.icon);
+    if (!fs.existsSync(fullPath)) continue;
 
-  container.addSectionComponents(
-    new SectionBuilder()
-      .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(header, 900)))
-      .setThumbnailAccessory(
-        new ThumbnailBuilder().setURL(d.avatarURL).setDescription(d.displayName)
-      )
-  );
-
-  container
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(body, 1200)));
-
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':details')
-      .setLabel('Detalhes')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:collection')
-      .setLabel(d.L('profile_btn_binder'))
-      .setEmoji('📔')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:team')
-      .setLabel(d.L('profile_btn_eleven'))
-      .setEmoji('📋')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:banners')
-      .setLabel(d.L('profile_btn_banner'))
-      .setEmoji('🎴')
-      .setStyle(ButtonStyle.Secondary)
-  );
-
-  if (d.isSelf) {
-    row1.addComponents(
-      new ButtonBuilder()
-        .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':share')
-        .setLabel(d.L('profile_btn_share'))
-        .setEmoji('📣')
-        .setStyle(ButtonStyle.Success)
+    const filename = `profile_card_${card.id}.png`;
+    files.push(new AttachmentBuilder(fullPath, { name: filename }));
+    gallery.addItems(
+      new MediaGalleryItemBuilder()
+        .setURL(`attachment://${filename}`)
+        .setDescription(`${card.name} · ${rarityLabel(d.userId, card.rarity || 'LOCKED')}`)
     );
   }
 
+  return { gallery: files.length ? gallery : null, files };
+}
+
+function buildHeaderSection(d) {
+  const badges = [];
+  for (const title of d.staffTitles) badges.push(`${title.emoji} **${title.label}**`);
+  badges.push(`${d.playerRank.emoji} **${d.rankName}**`);
+  if (d.isCollectionComplete) badges.push('🏁 **Coleção completa**');
+  if (d.isTeamComplete) badges.push('✅ **Onze completo**');
+
+  return new SectionBuilder()
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`# ${d.displayName}`),
+      new TextDisplayBuilder().setContent(`-# @${d.username}${d.isSelf ? ' · seu perfil' : ' · perfil consultado'}`),
+      new TextDisplayBuilder().setContent(safeTruncate(badges.join('  ·  '), 900))
+    )
+    .setThumbnailAccessory(
+      new ThumbnailBuilder()
+        .setURL(d.avatarURL)
+        .setDescription(`Avatar de ${d.displayName}`)
+    );
+}
+
+function buildMainView(d, viewerId) {
+  const overview = [
+    '## VISÃO GERAL',
+    `**Rank:** ${d.rankName}${d.playerRank.next ? ` · próximo **${d.nextRankName}** · \`${d.playerRank.progressToNext}%\`` : ' · **máximo alcançado**'}`,
+    `**Iene:** \`${d.iene.toLocaleString('pt-BR')}\`  ·  **Onze:** **${d.teamRows.length}/11**  ·  **Média:** **${d.avgLevel || 0}**`,
+    `**Binder:** **${d.owned}/${d.poolSize}** · \`${d.binderPct}%\` ${d.remaining > 0 ? `· faltam \`${d.remaining}\`` : '· **completo**'}`,
+    `**Formação:** **${d.formation.label}**  ·  **Master:** ${d.coachCard ? `**${d.coachCard.name}**` : '*não definido*'}`
+  ].join('\n');
+
+  const rankSection = new SectionBuilder()
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent('### RANK & PROGRESSO'),
+      new TextDisplayBuilder().setContent(
+        `**${d.rankName}**\n${d.playerRank.next ? `Próximo: **${d.nextRankName}** · \`${d.playerRank.progressToNext}%\`` : 'Você atingiu o limite atual de rank.'}\n\n${miniBar(d.playerRank.progressToNext, 100, 12)}`
+      )
+    )
+    .setSecondaryButtonAccessory(
+      button(`${CUSTOM_ID_PREFIX}:${viewerId}:details`, 'Detalhes', ButtonStyle.Secondary)
+    );
+
+  const collectionSection = new SectionBuilder()
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent('### COLEÇÃO'),
+      new TextDisplayBuilder().setContent(
+        `**${d.owned}/${d.poolSize}** cartas · **${d.binderPct}%**\n${miniBar(d.owned, d.poolSize, 12)}\n-# ${d.remaining > 0 ? `Faltam **${d.remaining}** para fechar o binder.` : 'Binder completo.'}`
+      )
+    )
+    .setPrimaryButtonAccessory(
+      button(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:collection`, 'Abrir coleção', ButtonStyle.Primary)
+    );
+
+  const teamSection = new SectionBuilder()
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent('### ONZE DA ARENA'),
+      new TextDisplayBuilder().setContent(
+        `**${d.teamRows.length}/11** jogadores · média **${d.avgLevel || 0}**\n**Formação:** ${d.formation.label}\n**Master:** ${d.coachCard ? d.coachCard.name : 'não definido'}${d.masterPassive ? `\n-# ${d.masterPassive}` : ''}`
+      )
+    )
+    .setPrimaryButtonAccessory(
+      button(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:team`, 'Abrir onze', ButtonStyle.Primary)
+    );
+
+  const { gallery, files } = buildCardGallery(d);
+
+  const container = new ContainerBuilder()
+    .setAccentColor(d.isCollectionComplete ? 0x57f287 : accentInt())
+    .addSectionComponents(buildHeaderSection(d))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(overview, 1800)))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addSectionComponents(rankSection, collectionSection, teamSection);
+
+  if (gallery) {
+    container
+      .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+      .addTextDisplayComponents(new TextDisplayBuilder().setContent('### CARTAS EM DESTAQUE'))
+      .addMediaGalleryComponents(gallery);
+  }
+
+  const recent = recentPullsLines(d.userId, 3) || 'Nenhum pull recente registrado.';
   container
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addActionRowComponents(row1);
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`### ÚLTIMAS AÇÕES\n${safeTruncate(recent, 900)}`),
+      new TextDisplayBuilder().setContent('-# Atalhos: `/collection` · `/team` · `/banners` · `/daily`')
+    );
 
-  return container;
+  if (d.isSelf) {
+    container.addSectionComponents(
+      new SectionBuilder()
+        .addTextDisplayComponents(
+          new TextDisplayBuilder().setContent('**COMPARTILHAR PERFIL**'),
+          new TextDisplayBuilder().setContent('-# Gere uma cópia visual deste painel para mostrar no servidor.')
+        )
+        .setSuccessButtonAccessory(
+          button(`${CUSTOM_ID_PREFIX}:${viewerId}:share`, 'Compartilhar', ButtonStyle.Success)
+        )
+    );
+  }
+
+  return { container, files };
 }
 
 function buildDetailsView(d, viewerId) {
-  let pitch;
-  if (d.teamRows.length > 0) {
-    const teamBySlot = new Map(d.teamRows.map(row => [row.slot, row]));
-    const squadPreview = d.lines.map(line => {
-      const cells = line.slots.map(slotKey => {
-        const entry = teamBySlot.get(slotKey);
-        if (!entry) return '⬜';
-        const head = emojiTag(getEmojiForCard(entry.cardId)) || '👤';
-        return head + TICK + entry.level + TICK;
-      }).join(' ');
-      return '**' + line.name + '** ' + cells;
-    }).join('\n');
-    const xp = whoNeedsXpLines(d.userId, d.teamRows, 3) || '—';
-    pitch = '### ⚽ Campo\n' + safeTruncate(squadPreview, 600) + '\n\n### 📈 Subir nível\n' + xp;
-  } else {
-    pitch = '### ⚽ Campo\n_' + (d.isSelf ? d.L('profile_empty_pitch') : d.L('profile_no_shape')) + '_';
-  }
+  const teamBySlot = new Map(d.teamRows.map(row => [row.slot, row]));
+  const pitch = d.teamRows.length
+    ? d.lines.map(line => {
+        const cells = line.slots.map(slot => {
+          const entry = teamBySlot.get(slot);
+          return entry ? `${emojiTag(getEmojiForCard(entry.cardId)) || '👤'} \`${entry.level}\`` : '⬜';
+        }).join(' ');
+        return `**${line.name}** ${cells}`;
+      }).join('\n')
+    : '*A escalação ainda está vazia.*';
 
   const tierLines = RARITY_ORDER.map(key => {
-    const totalInTier = d.cards.filter(c => c.rarity === key && c.position !== 'CO').length;
-    if (totalInTier === 0) return null;
-    const ownedInTier = d.userCards.filter(uc => {
-      const card = d.cards.find(c => c.id === uc.id);
+    const total = d.cards.filter(c => c.rarity === key && c.position !== 'CO').length;
+    if (!total) return null;
+    const owned = d.userCards.filter(uc => {
+      const card = cardFromUserCard(uc, d.cards);
       return card && card.position !== 'CO' && card.rarity === key;
     }).length;
-    return RARITIES[key].emoji + ' **' + rarityLabel(viewerId, key) + '** ' +
-      miniBar(ownedInTier, totalInTier, 6) + ' **' + ownedInTier + '**/' + totalInTier;
+    return `**${rarityLabel(viewerId, key)}** · ${miniBar(owned, total, 8)} **${owned}/${total}**`;
   }).filter(Boolean);
 
   const coachTotal = d.cards.filter(c => c.position === 'CO').length;
-  if (coachTotal > 0) {
-    const coachOwned = d.userCards.filter(uc => {
-      const card = d.cards.find(c => c.id === uc.id);
-      return card && card.position === 'CO';
-    }).length;
-    tierLines.push('🎩 **' + d.L('profile_masters') + '** ' + miniBar(coachOwned, coachTotal, 6) +
-      ' **' + coachOwned + '**/' + coachTotal);
+  if (coachTotal) {
+    const coachOwned = d.userCards.filter(uc => cardFromUserCard(uc, d.cards)?.position === 'CO').length;
+    tierLines.push(`**Masters** · ${miniBar(coachOwned, coachTotal, 8)} **${coachOwned}/${coachTotal}**`);
   }
 
-  const recent = recentPullsLines(d.userId, 5);
-  const binderBar = progressBar(d.owned, d.poolSize, 12);
-
-  const body =
-    pitch + '\n\n' +
-    '### 📔 Binder\n' + binderBar + ' **' + d.owned + '/' + d.poolSize + '**\n\n' +
-    '### 🏷️ Tiers\n' + (tierLines.join('\n') || '—') + '\n\n' +
-    '### 📜 Últimos pulls\n' + recent;
+  const xp = whoNeedsXpLines(d.userId, d.teamRows, 4) || 'Nenhum jogador precisa de XP no momento.';
+  const recent = recentPullsLines(d.userId, 5) || 'Nenhum pull recente registrado.';
+  const { gallery, files } = buildCardGallery(d);
 
   const container = new ContainerBuilder()
-    .setAccentColor(d.isCollectionComplete ? 0x57f287 : accentInt());
+    .setAccentColor(d.isCollectionComplete ? 0x57f287 : accentInt())
+    .addSectionComponents(buildHeaderSection(d))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`## CAMPO\n${safeTruncate(pitch, 1500)}`))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(
+      `## PROGRESSÃO\n${tierLines.join('\n') || '—'}\n\n**Binder:** ${progressBar(d.owned, d.poolSize, 12)} **${d.binderPct}%**`
+    ))
+    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`## SUBIR DE NÍVEL\n${safeTruncate(xp, 1100)}`));
+
+  if (gallery) {
+    container
+      .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+      .addTextDisplayComponents(new TextDisplayBuilder().setContent('## CARTAS DO ONZE'))
+      .addMediaGalleryComponents(gallery);
+  }
 
   container
-    .addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        safeTruncate('# Detalhes · ' + d.displayName, 200)
-      )
-    )
     .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
-    .addTextDisplayComponents(new TextDisplayBuilder().setContent(safeTruncate(body, 3500)))
-    .addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ÚLTIMOS PULLS\n${safeTruncate(recent, 1200)}`))
     .addActionRowComponents(
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':main')
-          .setLabel('Voltar')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:collection')
-          .setLabel(d.L('profile_btn_binder'))
-          .setEmoji('📔')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(CUSTOM_ID_PREFIX + ':' + viewerId + ':goto:team')
-          .setLabel(d.L('profile_btn_eleven'))
-          .setEmoji('📋')
-          .setStyle(ButtonStyle.Secondary)
+        button(`${CUSTOM_ID_PREFIX}:${viewerId}:main`, 'Voltar', ButtonStyle.Primary),
+        button(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:collection`, 'Coleção', ButtonStyle.Secondary),
+        button(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:team`, 'Onze', ButtonStyle.Secondary)
       )
     );
 
-  return container;
+  return { container, files };
 }
 
-function buildProfilePayload(targetUser, viewerId, view) {
-  if (view == null) view = 'main';
+function buildProfilePayload(targetUser, viewerId, view = 'main') {
   const d = loadProfileData(targetUser, viewerId);
-  const container = view === 'details' ? buildDetailsView(d, viewerId) : buildMainView(d, viewerId);
-  return { container: container, isSelf: d.isSelf, view: view };
+  return view === 'details' ? buildDetailsView(d, viewerId) : buildMainView(d, viewerId);
+}
+
+async function sendBuilt(interaction, built, edit = false) {
+  const payload = {
+    components: [built.container],
+    flags: MessageFlags.IsComponentsV2,
+    files: built.files || []
+  };
+  if (edit || interaction.deferred || interaction.replied) {
+    await interaction.editReply(payload);
+  } else {
+    await interaction.reply(payload);
+  }
 }
 
 async function openProfilePanel(interaction, userId, targetUser) {
   const built = buildProfilePayload(targetUser, userId, 'main');
   try {
-    await interaction.editReply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
-  } catch (e) {
+    await sendBuilt(interaction, built, true);
+  } catch (error) {
+    logger.error('Erro ao abrir painel de perfil', error.message);
     await interaction.followUp({
       components: [built.container],
-      flags: MessageFlags.IsComponentsV2 | 64
+      flags: MessageFlags.IsComponentsV2 | 64,
+      files: built.files || []
     });
   }
 }
 
 module.exports = {
-  buildProfilePayload: buildProfilePayload,
-  openProfilePanel: openProfilePanel,
+  buildProfilePayload,
+  openProfilePanel,
   data: withPtBr(
     new SlashCommandBuilder()
       .setName('profile')
-      .setDescription('Card do jogador — rank, iene, onze, binder e formacao')
+      .setDescription('Exibe o perfil completo do jogador com rank, iene, onze, coleção e progressão.')
       .addUserOption(opt =>
         optionPtBr(
-          opt.setName('user').setDescription('De quem ver o card (padrao: voce)').setRequired(false),
-          'De quem ver o card (padrao: voce)'
+          opt.setName('user').setDescription('Escolha a pessoa cujo perfil deseja consultar.').setRequired(false),
+          'Escolha a pessoa cujo perfil deseja consultar.'
         )
       ),
-    'Card do jogador — rank, iene, onze, binder e formacao'
+    'Exibe o perfil completo do jogador com rank, iene, onze, coleção e progressão.'
   ),
 
   async execute(interaction) {
@@ -337,21 +395,24 @@ module.exports = {
       const target = interaction.options.getUser('user') || interaction.user;
       if (target.bot) {
         await interaction.reply({
-          embeds: [buildStatusEmbed('WARNING', 'Contas automaticas nao jogam', config.MESSAGES.BOTS_DONT_PLAY || 'Escolha uma pessoa.')],
+          embeds: [buildStatusEmbed('WARNING', 'Contas automáticas não jogam', 'Escolha uma pessoa para consultar o perfil.')],
           flags: 64
         });
         return;
       }
       const built = buildProfilePayload(target, interaction.user.id, 'main');
-      await interaction.reply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
+      await sendBuilt(interaction, built);
       await maybeSendDmHint(interaction);
     } catch (error) {
-      logger.error('Error in /profile command', error.message);
+      logger.error('Erro no comando /profile', error.message);
       try {
         if (!interaction.replied && !interaction.deferred) {
-          await interaction.reply({ embeds: [buildStatusEmbed('ERROR', config.MESSAGES.ERROR_LOADING)], flags: 64 });
+          await interaction.reply({
+            embeds: [buildStatusEmbed('ERROR', 'Não foi possível carregar o perfil.')],
+            flags: 64
+          });
         }
-      } catch (e) {}
+      } catch {}
     }
   },
 
@@ -363,7 +424,7 @@ module.exports = {
 
     if (interaction.user.id !== ownerId) {
       await interaction.reply({
-        embeds: [buildStatusEmbed('WARNING', 'Painel de outra pessoa', 'Abra o seu com **/profile**.')],
+        embeds: [buildStatusEmbed('WARNING', 'Painel de outra pessoa', 'Abra o seu perfil com **/profile**.')],
         flags: 64
       });
       return;
@@ -371,38 +432,19 @@ module.exports = {
 
     if (action === 'details' || action === 'main') {
       await interaction.deferUpdate();
-      try {
-        const built = buildProfilePayload(interaction.user, ownerId, action === 'details' ? 'details' : 'main');
-        await interaction.editReply({ components: [built.container], flags: MessageFlags.IsComponentsV2 });
-      } catch (error) {
-        logger.error('Error toggling profile view', error.message);
-      }
+      const built = buildProfilePayload(interaction.user, ownerId, action === 'details' ? 'details' : 'main');
+      await sendBuilt(interaction, built, true);
       return;
     }
 
     if (action === 'share') {
       const built = buildProfilePayload(interaction.user, ownerId, 'main');
-      try {
-        await interaction.reply({
-          components: [built.container],
-          flags: MessageFlags.IsComponentsV2
-        });
-      } catch (e) {
-        await interaction.followUp({
-          components: [built.container],
-          flags: MessageFlags.IsComponentsV2
-        });
-      }
+      await sendBuilt(interaction, built);
       return;
     }
 
     if (action === 'goto') {
       await openDestination(interaction, dest, ownerId);
-      return;
-    }
-
-    if (action === 'nav') {
-      await openDestination(interaction, interaction.values && interaction.values[0], ownerId);
     }
   }
 };
