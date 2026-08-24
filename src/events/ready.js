@@ -4,7 +4,6 @@ const { Events, ActivityType } = require('discord.js');
 const logger = require('../logger/logger.js');
 const config = require('../config/config.js');
 const { registerCommands } = require('../utils/CommandRegistrar.js');
-const { syncCharacterEmojis } = require('../services/emojiSync.js');
 const { runMediaPrep } = require('../services/mediaPrep.js');
 const voiceTracking = require('../services/voiceTracking.js');
 const { restoreGateTimers } = require('../services/gateNotify.js');
@@ -236,12 +235,6 @@ module.exports = {
       auditBannerArt();
     } catch (error) {
       logger.warn('Banner art audit failed', error.message);
-    }
-
-    try {
-      await syncCharacterEmojis(client);
-    } catch (error) {
-      logger.error('emojiSync: falha inesperada ao sincronizar emojis, bot continua subindo normalmente', error.message);
     }
 
     const alreadyConnected = markAlreadyConnectedUsers(client);
