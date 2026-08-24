@@ -14,14 +14,15 @@
  * além do id/name do emoji, um hash SHA-256 do arquivo do ícone no
  * momento em que ele foi enviado. No boot, comparamos esse hash com o
  * hash atual do arquivo em data/icons/ - só ícones cujo hash mudou
- * (ou que nunca foram enviados) disparam uma chamada à API. Na
- * grande maioria dos restarts, isso não faz NENHUMA chamada de rede:
- * só lê e faz hash dos arquivos localmente.
+ * (ou que nunca foram enviados) disparam uma chamada à API.
+ *
+ * EXTRA: se o ID guardado no JSON não existir mais na application
+ * (bot recriado, token trocado, emoji apagado manualmente), o mapping
+ * é invalidado e o ícone é reenviado. Sem isso o bot emite <:name:id>
+ * que o Discord renderiza como texto :name:.
  *
  * Nunca lança erro pra fora - uma falha aqui (rate limit, rede
- * instável, etc) é logada e o bot continua subindo normalmente, só
- * sem atualizar o(s) emoji(s) daquela vez. Na próxima vez que o bot
- * reiniciar, tenta de novo.
+ * instável, etc) é logada e o bot continua subindo normalmente.
  */
 const fs = require('fs');
 const path = require('path');
@@ -84,6 +85,20 @@ function sleep(ms) {
 }
 
 /**
+ * Fetch current application emoji IDs (string set).
+ * Returns null on failure so we skip the verify pass.
+ */
+async function loadLiveEmojiIds(client) {
+  try {
+    const emojis = await client.application.emojis.fetch();
+    return new Set([...emojis.keys()].map(String));
+  } catch (error) {
+    logger.warn('emojiSync: não consegui listar application emojis', error.message);
+    return null;
+  }
+}
+
+/**
  * Roda a sincronização. Chamado a partir do evento ready, com o
  * client já logado (client.application disponível).
  * @param {import('discord.js').Client} client
@@ -102,11 +117,11 @@ async function syncCharacterEmojis(client) {
   }
 
   const mapping = loadMapping();
+  const liveIds = await loadLiveEmojiIds(client);
 
-  // Descobre quais cartas precisam de upload/reenvio ANTES de fazer
-  // qualquer chamada de rede - assim, se nada mudou (o caso comum em
-  // 99% dos restarts), a gente nem toca em client.application.
   const pending = [];
+  let staleCount = 0;
+
   for (const card of cards) {
     if (!card.icon) continue;
 
@@ -119,11 +134,18 @@ async function syncCharacterEmojis(client) {
     const hash = hashFile(iconPath);
     const existing = mapping[String(card.id)];
 
-    if (existing && existing.hash === hash) {
-      continue; // nada mudou, não precisa fazer nada
+    // ID no JSON que não existe mais na application → força reupload
+    const idMissing =
+      liveIds &&
+      existing?.id &&
+      !liveIds.has(String(existing.id));
+
+    if (existing && existing.hash === hash && !idMissing) {
+      continue;
     }
 
-    pending.push({ card, iconPath, hash, existing });
+    if (idMissing) staleCount++;
+    pending.push({ card, iconPath, hash, existing, idMissing: Boolean(idMissing) });
   }
 
   if (pending.length === 0) {
@@ -131,21 +153,25 @@ async function syncCharacterEmojis(client) {
     return;
   }
 
-  logger.info(`emojiSync: ${pending.length} ícone(s) mudaram desde o último envio - sincronizando com o Discord...`);
+  logger.info(
+    `emojiSync: ${pending.length} ícone(s) a sincronizar` +
+      (staleCount ? ` (${staleCount} ID(s) stale / :name:)` : '') +
+      '…'
+  );
 
   let synced = 0;
   let failed = 0;
 
-  for (const { card, iconPath, hash, existing } of pending) {
+  for (const { card, iconPath, hash, existing, idMissing } of pending) {
     try {
-      if (existing?.id) {
+      if (existing?.id && !idMissing) {
         try {
           await client.application.emojis.delete(existing.id);
         } catch (error) {
-          // Se o emoji antigo já não existir mais no Discord por
-          // algum motivo (ex: apagado manualmente), não é motivo pra
-          // desistir do reenvio - só loga e segue pra criar o novo.
-          logger.warn(`emojiSync: não consegui apagar o emoji antigo de ${card.name} (${existing.id}), tentando enviar mesmo assim`, error.message);
+          logger.warn(
+            `emojiSync: não consegui apagar o emoji antigo de ${card.name} (${existing.id}), tentando enviar mesmo assim`,
+            error.message
+          );
         }
         await sleep(1200);
       }
@@ -161,7 +187,10 @@ async function syncCharacterEmojis(client) {
       mapping[String(card.id)] = { id: created.id, name: created.name, hash };
       saveMapping(mapping);
 
-      logger.success(`emojiSync: ${card.name} -> emoji "${created.name}" atualizado (${(resizedBuffer.length / 1024).toFixed(1)}KB)`);
+      logger.success(
+        `emojiSync: ${card.name} -> emoji "${created.name}" atualizado (${(resizedBuffer.length / 1024).toFixed(1)}KB)` +
+          (idMissing ? ' [stale fixed]' : '')
+      );
       synced++;
 
       await sleep(1200);
