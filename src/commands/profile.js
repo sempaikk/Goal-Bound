@@ -210,7 +210,7 @@ function buildMainView(d, viewerId) {
         `**${d.rankName}**\n${d.playerRank.next ? `Próximo: **${d.nextRankName}** · \`${d.playerRank.progressToNext}%\`` : 'Você atingiu o limite atual de rank.'}\n\n${miniBar(d.playerRank.progressToNext, 100, 12)}`
       )
     )
-    .setSecondaryButtonAccessory(
+    .setButtonAccessory(
       button(`${CUSTOM_ID_PREFIX}:${viewerId}:details`, 'Detalhes', ButtonStyle.Secondary)
     );
 
@@ -221,7 +221,7 @@ function buildMainView(d, viewerId) {
         `**${d.owned}/${d.poolSize}** cartas · **${d.binderPct}%**\n${miniBar(d.owned, d.poolSize, 12)}\n-# ${d.remaining > 0 ? `Faltam **${d.remaining}** para fechar o binder.` : 'Binder completo.'}`
       )
     )
-    .setPrimaryButtonAccessory(
+    .setButtonAccessory(
       button(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:collection`, 'Abrir coleção', ButtonStyle.Primary)
     );
 
@@ -232,7 +232,7 @@ function buildMainView(d, viewerId) {
         `**${d.teamRows.length}/11** jogadores · média **${d.avgLevel || 0}**\n**Formação:** ${d.formation.label}\n**Master:** ${d.coachCard ? d.coachCard.name : 'não definido'}${d.masterPassive ? `\n-# ${d.masterPassive}` : ''}`
       )
     )
-    .setPrimaryButtonAccessory(
+    .setButtonAccessory(
       button(`${CUSTOM_ID_PREFIX}:${viewerId}:goto:team`, 'Abrir onze', ButtonStyle.Primary)
     );
 
@@ -268,7 +268,7 @@ function buildMainView(d, viewerId) {
           new TextDisplayBuilder().setContent('**COMPARTILHAR PERFIL**'),
           new TextDisplayBuilder().setContent('-# Gere uma cópia visual deste painel para mostrar no servidor.')
         )
-        .setSuccessButtonAccessory(
+        .setButtonAccessory(
           button(`${CUSTOM_ID_PREFIX}:${viewerId}:share`, 'Compartilhar', ButtonStyle.Success)
         )
     );
