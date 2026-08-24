@@ -6,24 +6,30 @@ const { FORMATIONS } = require('./formations.js');
 const { bitmapTextSvg } = require('./pitchBitmapFont.js');
 
 const ICONS_DIR = path.join(__dirname, '..', '..', 'data', 'icons');
+const IMAGES_DIR = path.join(__dirname, '..', '..', 'data', 'images');
 const PITCH_PATH = path.join(__dirname, '..', '..', 'data', 'images', 'team', 'pitch.jpg');
 const PITCH_PATH_PNG = path.join(__dirname, '..', '..', 'data', 'images', 'team', 'pitch.png');
 
 const W = 820;
 const H = 1180;
 
+/** Mini FUT card size on the pitch (readable OVR + name). */
+const CARD_W = 128;
+const CARD_H = 190;
+const CARD_HALF_W = CARD_W / 2;
+const CARD_HALF_H = CARD_H / 2;
+
+/** Legacy circular head (fallback when no FUT art). */
 const HEAD = 96;
 const HEAD_R = HEAD / 2;
 
 const RING_OUTER = 4.5;
 const RING_INNER = 2;
 
-const NAME_GAP = 12;
-
-const ATT_Y = 230;
-const MID_Y = 520;
-const DEF_Y = 800;
-const GK_Y = 1005;
+const ATT_Y = 210;
+const MID_Y = 500;
+const DEF_Y = 790;
+const GK_Y = 1020;
 
 const FIELD = {
   left: 70,
@@ -73,6 +79,8 @@ const CROP_BIAS = {
 
 const LINE_Y = { ATT: ATT_Y, MID: MID_Y, DEF: DEF_Y, GK: GK_Y };
 
+const CARD_CACHE = new Map();
+const CARD_CACHE_MAX = 64;
 const HEAD_CACHE = new Map();
 const HEAD_CACHE_MAX = 80;
 const PLACEHOLDER_CACHE = new Map();
@@ -128,7 +136,8 @@ function slotItems(teamMap, slots) {
       color: LINE[lk],
       first,
       rest,
-      level: card ? (card.level ?? 0) : null
+      level: card ? (card.level ?? 0) : null,
+      hasFut: Boolean(card && card.hasFut)
     };
   });
 }
@@ -159,72 +168,122 @@ function buildOverlaySvg(teamMap, slots, formationLabel) {
   const ready = filled === 11;
   const items = slotItems(teamMap, slots);
 
-  const shadows = items
+  const emptySlots = items
     .map(({ slot, card, color }) => {
-      if (!card) return '';
-      const sy = slot.y + HEAD_R + 2;
-      return `\n        <ellipse cx="${slot.x}" cy="${sy}" rx="${HEAD_R * 0.92}" ry="${HEAD_R * 0.26}"\n          fill="${color.glow}" opacity="0.18" filter="url(#blurSoft)"/>\n        <ellipse cx="${slot.x}" cy="${sy + 2}" rx="${HEAD_R * 0.82}" ry="${HEAD_R * 0.20}"\n          fill="#000" opacity="0.45" filter="url(#blurSoft)"/>`;
+      if (card) return '';
+      const x = slot.x - CARD_HALF_W;
+      const y = slot.y - CARD_HALF_H;
+      return `
+        <rect x="${x}" y="${y}" width="${CARD_W}" height="${CARD_H}" rx="14"
+          fill="rgba(6,10,14,0.55)" stroke="${color.stroke}" stroke-width="2.5"
+          stroke-opacity="0.9" stroke-dasharray="6 5"/>
+        <text x="${slot.x}" y="${slot.y + 4}" text-anchor="middle"
+          font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700"
+          fill="${color.stroke}" fill-opacity="0.85">${String(slot.label || '?').slice(0, 4)}</text>`;
     })
     .join('');
 
-  const rings = items
-    .map(({ slot, card, color }) => {
-      if (!card) {
-        return `\n          <circle cx="${slot.x}" cy="${slot.y}" r="${HEAD_R + 4}"\n            fill="rgba(6,10,14,0.62)" stroke="${color.stroke}" stroke-width="4.2"\n            stroke-opacity="0.98"/>\n          <circle cx="${slot.x}" cy="${slot.y}" r="${HEAD_R - 0.5}"\n            fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="2.2"/>`;
-      }
-      const outerR = HEAD_R + RING_OUTER + 1.5;
-      const innerR = HEAD_R + 1.2;
-      return `\n        <circle cx="${slot.x}" cy="${slot.y}" r="${outerR + 5}"\n          fill="none" stroke="${color.glow}" stroke-width="8" opacity="0.12"\n          filter="url(#blurSoft)"/>\n        <circle cx="${slot.x}" cy="${slot.y}" r="${outerR}"\n          fill="none" stroke="${color.stroke}" stroke-width="${RING_OUTER}"/>\n        <circle cx="${slot.x}" cy="${slot.y}" r="${innerR}"\n          fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="${RING_INNER}"/>`;
+  const shadows = items
+    .map(({ slot, card }) => {
+      if (!card) return '';
+      const sy = slot.y + CARD_HALF_H - 6;
+      return `
+        <ellipse cx="${slot.x}" cy="${sy}" rx="${CARD_HALF_W * 0.88}" ry="14"
+          fill="#000" opacity="0.4" filter="url(#blurSoft)"/>`;
     })
     .join('');
 
   const status = ready ? 'READY' : `${filled}/11`;
   const statusColor = ready ? '#3DDC97' : '#F6F6F8';
-  const formLabel = String(formationLabel || '4-3-3').replace(/[^0-9A-Za-z\-]/g, '');
+  const formLabel = String(formationLabel || '4-3-3').replace(/[^0-9A-Za-z\- ]/g, '');
 
   const hudY = H - 42;
-  const hud = `\n    <g filter="url(#drop)">\n      <rect x="${CX - 116}" y="${H - 64}" width="232" height="44" rx="22"\n        fill="#090C11" fill-opacity="0.92" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>\n      ${bitmapTextSvg(formLabel, CX - 48, hudY, 1.6, '#F6F6F8')}\n      <circle cx="${CX + 8}" cy="${hudY}" r="1.5" fill="rgba(255,255,255,0.45)"/>\n      ${bitmapTextSvg(status, CX + 55, hudY, 1.6, statusColor)}\n    </g>`;
+  const hud = `
+    <g filter="url(#drop)">
+      <rect x="${CX - 116}" y="${H - 64}" width="232" height="44" rx="22"
+        fill="#090C11" fill-opacity="0.92" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
+      ${bitmapTextSvg(formLabel, CX - 48, hudY, 1.6, '#F6F6F8')}
+      <circle cx="${CX + 8}" cy="${hudY}" r="1.5" fill="rgba(255,255,255,0.45)"/>
+      ${bitmapTextSvg(status, CX + 55, hudY, 1.6, statusColor)}
+    </g>`;
 
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">\n    <defs>\n      <filter id="blurSoft" x="-60%" y="-60%" width="220%" height="220%">\n        <feGaussianBlur in="SourceGraphic" stdDeviation="4"/>\n      </filter>\n      <filter id="drop" x="-30%" y="-30%" width="160%" height="160%">\n        <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.55"/>\n      </filter>\n    </defs>\n    ${shadows}\n    ${rings}\n    ${hud}\n  </svg>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="blurSoft" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="4"/>
+      </filter>
+      <filter id="drop" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.55"/>
+      </filter>
+    </defs>
+    ${shadows}
+    ${emptySlots}
+    ${hud}
+  </svg>`;
 }
 
 function buildFallbackBaseSvg() {
-  return `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">\n    <rect width="${W}" height="${H}" fill="#0C372C"/>\n    ${bitmapTextSvg('NO PITCH', CX, H / 2, 3, '#FFFFFF')}\n  </svg>`;
+  return `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${W}" height="${H}" fill="#0C372C"/>
+    ${bitmapTextSvg('NO PITCH', CX, H / 2, 3, '#FFFFFF')}
+  </svg>`;
 }
 
+/** Name plates only for non-FUT fallbacks (FUT art already has name). */
 function buildNamesSvg(teamMap, slots) {
   const items = slotItems(teamMap, slots);
 
   const names = items
-    .map(({ slot, card, first, rest, level, color }) => {
-      const plateTop = slot.y + HEAD_R + NAME_GAP;
+    .map(({ slot, card, first, rest, level, color, hasFut }) => {
+      if (!card || hasFut) return '';
 
-      if (!card) {
-        const label = String(first || slot.label || '?').slice(0, 6);
-        const plateW = Math.max(52, label.length * 10 + 20);
-        const plateH = 22;
-        return `\n          <rect x="${slot.x - plateW / 2}" y="${plateTop}" width="${plateW}" height="${plateH}"\n            rx="11" fill="rgba(6,10,14,0.88)" stroke="${color.stroke}"\n            stroke-width="1.4" stroke-opacity="0.9"/>\n          ${bitmapTextSvg(label, slot.x, plateTop + plateH / 2, 1.5, '#F6F6F8')}`;
-      }
-
+      const plateTop = slot.y + HEAD_R + 10;
       const nameLine = String(first || '').slice(0, 10);
       const restLine = rest ? String(rest).slice(0, 10) : '';
       const hasRest = Boolean(restLine);
       const plateH = hasRest ? 34 : 24;
       const plateW = Math.min(140, Math.max(92, Math.max(nameLine.length, restLine.length) * 11 + 40));
       const tx = slot.x;
-
       const chipR = 11;
       const chipX = tx + plateW / 2 - chipR - 6;
       const chipY = plateTop + plateH / 2;
-
       const nameY1 = hasRest ? plateTop + 10 : plateTop + plateH / 2;
       const nameY2 = plateTop + 24;
 
-      return `\n        <rect x="${tx - plateW / 2}" y="${plateTop}" width="${plateW}" height="${plateH}"\n          rx="${plateH / 2}" fill="rgba(4,6,10,0.94)"\n          stroke="${color.stroke}" stroke-width="1.1" stroke-opacity="0.7"/>\n        ${bitmapTextSvg(nameLine, tx - 10, nameY1, 1.4, '#F6F6F8')}\n        ${hasRest ? bitmapTextSvg(restLine, tx - 10, nameY2, 1.2, 'rgba(246,246,248,0.75)') : ''}\n        <circle cx="${chipX}" cy="${chipY}" r="${chipR}"\n          fill="#07090D" stroke="${color.stroke}" stroke-width="1.7"/>\n        ${bitmapTextSvg(String(level ?? 0), chipX, chipY, 1.35, '#F6F6F8')}`;
+      return `
+        <rect x="${tx - plateW / 2}" y="${plateTop}" width="${plateW}" height="${plateH}"
+          rx="${plateH / 2}" fill="rgba(4,6,10,0.94)"
+          stroke="${color.stroke}" stroke-width="1.1" stroke-opacity="0.7"/>
+        ${bitmapTextSvg(nameLine, tx - 10, nameY1, 1.4, '#F6F6F8')}
+        ${hasRest ? bitmapTextSvg(restLine, tx - 10, nameY2, 1.2, 'rgba(246,246,248,0.75)') : ''}
+        <circle cx="${chipX}" cy="${chipY}" r="${chipR}"
+          fill="#07090D" stroke="${color.stroke}" stroke-width="1.7"/>
+        ${bitmapTextSvg(String(level ?? 0), chipX, chipY, 1.35, '#F6F6F8')}`;
     })
     .join('');
 
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">\n    ${names}\n  </svg>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    ${names}
+  </svg>`;
+}
+
+async function scaleFutCard(imagePath) {
+  const key = `fut:${path.basename(imagePath).toLowerCase()}`;
+  const hit = CARD_CACHE.get(key);
+  if (hit) return hit;
+
+  const buf = await sharp(imagePath, { animated: false })
+    .ensureAlpha()
+    .resize(CARD_W, CARD_H, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+
+  if (CARD_CACHE.size >= CARD_CACHE_MAX) {
+    const oldest = CARD_CACHE.keys().next().value;
+    CARD_CACHE.delete(oldest);
+  }
+  CARD_CACHE.set(key, buf);
+  return buf;
 }
 
 async function circularHead(iconPath, lineColor) {
@@ -243,7 +302,20 @@ async function circularHead(iconPath, lineColor) {
   );
 
   const rimColor = lineColor || '#FFFFFF';
-  const lightOverlay = Buffer.from(`\n    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">\n      <defs>\n        <radialGradient id="spot" cx="50%" cy="26%" r="70%">\n          <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>\n          <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.03"/>\n          <stop offset="100%" stop-color="#000000" stop-opacity="0.22"/>\n        </radialGradient>\n      </defs>\n      <circle cx="${r}" cy="${r}" r="${r}" fill="url(#spot)"/>\n      <circle cx="${r}" cy="${r}" r="${r - 1}" fill="none"\n        stroke="${rimColor}" stroke-width="2.5" stroke-opacity="0.35"/>\n    </svg>\n  `);
+  const lightOverlay = Buffer.from(`
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="spot" cx="50%" cy="26%" r="70%">
+          <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
+          <stop offset="45%" stop-color="#FFFFFF" stop-opacity="0.03"/>
+          <stop offset="100%" stop-color="#000000" stop-opacity="0.22"/>
+        </radialGradient>
+      </defs>
+      <circle cx="${r}" cy="${r}" r="${r}" fill="url(#spot)"/>
+      <circle cx="${r}" cy="${r}" r="${r - 1}" fill="none"
+        stroke="${rimColor}" stroke-width="2.5" stroke-opacity="0.35"/>
+    </svg>
+  `);
 
   const body = await sharp(iconPath)
     .ensureAlpha()
@@ -278,7 +350,21 @@ async function placeholderHead(displayName, lineColor) {
   const hit = PLACEHOLDER_CACHE.get(key);
   if (hit) return hit;
 
-  const svg = Buffer.from(`\n    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">\n      <defs>\n        <radialGradient id="phBg" cx="42%" cy="32%" r="72%">\n          <stop offset="0%" stop-color="#243040"/>\n          <stop offset="55%" stop-color="#121820"/>\n          <stop offset="100%" stop-color="#070A0E"/>\n        </radialGradient>\n      </defs>\n      <circle cx="${r}" cy="${r}" r="${r}" fill="url(#phBg)"/>\n      <circle cx="${r}" cy="${r}" r="${r - 2.5}" fill="none"\n        stroke="${stroke}" stroke-width="3.2" stroke-opacity="0.7"/>\n      ${bitmapTextSvg(initials, r, r, 3.2, '#F6F6F8')}\n    </svg>\n  `);
+  const svg = Buffer.from(`
+    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="phBg" cx="42%" cy="32%" r="72%">
+          <stop offset="0%" stop-color="#243040"/>
+          <stop offset="55%" stop-color="#121820"/>
+          <stop offset="100%" stop-color="#070A0E"/>
+        </radialGradient>
+      </defs>
+      <circle cx="${r}" cy="${r}" r="${r}" fill="url(#phBg)"/>
+      <circle cx="${r}" cy="${r}" r="${r - 2.5}" fill="none"
+        stroke="${stroke}" stroke-width="3.2" stroke-opacity="0.7"/>
+      ${bitmapTextSvg(initials, r, r, 3.2, '#F6F6F8')}
+    </svg>
+  `);
 
   const buf = await sharp(svg).png().toBuffer();
   PLACEHOLDER_CACHE.set(key, buf);
@@ -304,6 +390,13 @@ function resolveCard(byId, cardId) {
   return byId.get(cardId) || byId.get(Number(cardId)) || byId.get(String(cardId)) || null;
 }
 
+function resolveLocalImagePath(localImage) {
+  if (!localImage) return null;
+  const full = path.join(IMAGES_DIR, localImage);
+  if (fs.existsSync(full)) return full;
+  return null;
+}
+
 async function renderTeam(teamRows, allCards, formationId = '4-3-3') {
   const formation = FORMATIONS[formationId] || FORMATIONS['4-3-3'];
   const slots = resolveSlots(formation.id);
@@ -312,10 +405,14 @@ async function renderTeam(teamRows, allCards, formationId = '4-3-3') {
   const teamMap = new Map();
   for (const row of teamRows || []) {
     const card = resolveCard(byId, row.cardId);
-    const iconName = card?.icon || null;
+    const localImage = card?.localImage || null;
+    const futPath = resolveLocalImagePath(localImage);
     teamMap.set(row.slot, {
       name: row.cardName || card?.name || row.slot,
-      icon: iconName,
+      icon: card?.icon || null,
+      localImage,
+      futPath,
+      hasFut: Boolean(futPath),
       level: row.level ?? 0
     });
   }
@@ -331,41 +428,64 @@ async function renderTeam(teamRows, allCards, formationId = '4-3-3') {
   const overlaySvg = buildOverlaySvg(teamMap, slots, formation.label);
   const overlayPng = await sharp(Buffer.from(overlaySvg)).png().toBuffer();
 
-  const headJobs = slots.map(async slot => {
+  const artJobs = slots.map(async slot => {
     const entry = teamMap.get(slot.key);
     if (!entry) return null;
 
     const lk = lineOf(slot.key, slots);
     const lineColor = LINE[lk].stroke;
-    const left = Math.round(slot.x - HEAD_R);
-    const top = Math.round(slot.y - HEAD_R);
+
+    if (entry.futPath) {
+      try {
+        const cardBuf = await scaleFutCard(entry.futPath);
+        return {
+          input: cardBuf,
+          left: Math.round(slot.x - CARD_HALF_W),
+          top: Math.round(slot.y - CARD_HALF_H),
+          label: entry.name,
+          source: 'fut'
+        };
+      } catch (err) {
+        logger.error(`Failed FUT card for ${entry.name}`, err.message);
+      }
+    }
 
     if (entry.icon) {
       const iconPath = path.join(ICONS_DIR, entry.icon);
       if (fs.existsSync(iconPath)) {
         try {
           const head = await circularHeadCached(iconPath, lineColor);
-          return { input: head, left, top, label: entry.name, source: 'icon' };
+          return {
+            input: head,
+            left: Math.round(slot.x - HEAD_R),
+            top: Math.round(slot.y - HEAD_R),
+            label: entry.name,
+            source: 'icon'
+          };
         } catch (err) {
           logger.error(`Failed head for ${entry.name}`, err.message);
         }
       } else {
         logger.warn(`Icon not found: ${iconPath} (${entry.name}) — using placeholder`);
       }
-    } else {
-      logger.warn(`No icon field for ${entry.name} — using placeholder`);
     }
 
     try {
       const head = await placeholderHead(entry.name, lineColor);
-      return { input: head, left, top, label: entry.name, source: 'placeholder' };
+      return {
+        input: head,
+        left: Math.round(slot.x - HEAD_R),
+        top: Math.round(slot.y - HEAD_R),
+        label: entry.name,
+        source: 'placeholder'
+      };
     } catch (err) {
       logger.error(`Placeholder head failed for ${entry.name}`, err.message);
       return null;
     }
   });
 
-  const layers = (await Promise.all(headJobs)).filter(Boolean);
+  const layers = (await Promise.all(artJobs)).filter(Boolean);
 
   const namesSvg = buildNamesSvg(teamMap, slots);
   const namesPng = await sharp(Buffer.from(namesSvg)).png().toBuffer();
@@ -382,15 +502,12 @@ async function renderTeam(teamRows, allCards, formationId = '4-3-3') {
     .png()
     .toBuffer();
 
-  const iconHeads = layers.filter(l => l.source === 'icon').length;
-  const phHeads = layers.filter(l => l.source === 'placeholder').length;
+  const futN = layers.filter(l => l.source === 'fut').length;
+  const iconN = layers.filter(l => l.source === 'icon').length;
+  const phN = layers.filter(l => l.source === 'placeholder').length;
   logger.info(
-    `Team render: ${teamMap.size} seated · ${iconHeads} icon head(s) · ${phHeads} placeholder(s) · pitch=${pitchPathUsed ? path.basename(pitchPathUsed) : 'fallback'}`
+    `Team render: ${teamMap.size} seated · ${futN} FUT · ${iconN} icon · ${phN} placeholder · pitch=${pitchPathUsed ? path.basename(pitchPathUsed) : 'fallback'}`
   );
-
-  if (teamMap.size > 0 && layers.length === 0) {
-    logger.warn('Team render: filled slots but no head layers — check data/icons');
-  }
 
   return out;
 }
@@ -399,6 +516,7 @@ function clearPitchCache() {
   pitchBufferCache = null;
   pitchPathUsed = null;
   HEAD_CACHE.clear();
+  CARD_CACHE.clear();
 }
 
 module.exports = {
@@ -406,6 +524,9 @@ module.exports = {
   FORMATION_SLOTS: SLOTS,
   resolveSlots,
   ICONS_DIR,
+  IMAGES_DIR,
   PITCH_PATH,
-  clearPitchCache
+  clearPitchCache,
+  CARD_W,
+  CARD_H
 };
