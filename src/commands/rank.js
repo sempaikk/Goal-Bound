@@ -51,8 +51,8 @@ module.exports = {
   data: withPtBr(
     new SlashCommandBuilder()
       .setName('leaderboard')
-      .setDescription('🏆 Live top-100 board — open, climb, dominate'),
-    '🏆 Placar ao vivo top 100 — abrir, subir, dominar'
+      .setDescription('Placar ao vivo top 100 — veja sua posição e abra o ranking completo.'),
+    'Placar ao vivo top 100 — veja sua posição e abra o ranking completo.'
   ),
 
   async execute(interaction) {
