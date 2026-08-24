@@ -200,23 +200,22 @@ function pickHighlight(results) {
 
 function attachCardArt(card) {
   const files = [];
-  let imageSource = card.gif || null;
+  let imageSource = null;
+
   if (card.localImage) {
     const localPath = path.join(IMAGES_DIR, card.localImage);
     if (fs.existsSync(localPath)) {
-      files.push(new AttachmentBuilder(localPath, { name: card.localImage }));
-      imageSource = `attachment://${card.localImage}`;
+      // Discord attachment names must be basename only (no folders)
+      const attachName = path.basename(card.localImage);
+      files.push(new AttachmentBuilder(localPath, { name: attachName }));
+      imageSource = `attachment://${attachName}`;
+    } else {
+      logger.warn(`Card art missing: ${localPath}`);
     }
   }
-  let thumbnailSource = null;
-  if (card.icon) {
-    const iconPath = path.join(ICONS_DIR, card.icon);
-    if (fs.existsSync(iconPath)) {
-      files.push(new AttachmentBuilder(iconPath, { name: `icon_${card.icon}` }));
-      thumbnailSource = `attachment://icon_${card.icon}`;
-    }
-  }
-  return { files, imageSource, thumbnailSource };
+
+  // Thumbnail / icon intentionally disabled — FUT card is the only character art.
+  return { files, imageSource, thumbnailSource: null };
 }
 
 function pullAuthor(interaction) {
@@ -423,7 +422,6 @@ async function runPull(interaction, bannerId, count = 1) {
       .setFooter({ text: collectionFooter(userId, ownedNow, poolSize, privileged, banner) })
       .setTimestamp();
     if (art.imageSource) embed.setImage(art.imageSource);
-    if (art.thumbnailSource) embed.setThumbnail(art.thumbnailSource);
 
     const posted = await publishPullToChannel(interaction, { embeds: [embed], files: art.files });
     if (!posted.ok) await interaction.editReply({ embeds: [embed], components: buildBannerPanelRow(userId, bannerId, privileged ? 0 : remainingFor(userId), ieneBalance), files: art.files });
@@ -480,7 +478,6 @@ async function runPull(interaction, bannerId, count = 1) {
     .setTitle(safeTruncate(titleEmoji ? `${titleEmoji} ${randomCard.name}` : randomCard.name, 256))
     .setDescription(safeTruncate(bits.join('\n'), 4096))
     .setImage(art.imageSource || null)
-    .setThumbnail(art.thumbnailSource || null)
     .setFooter({ text: collectionFooter(userId, updatedOwnedInPool, poolSize, privileged, banner) })
     .setTimestamp();
 
