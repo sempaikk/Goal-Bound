@@ -1,28 +1,11 @@
 /**
- * Sincroniza automaticamente os Application Emojis do bot com os
- * ícones de data/icons/ toda vez que o bot inicia (chamado a partir
- * do evento ready).
+ * Sincroniza Application Emojis com data/icons/ no boot.
  *
- * Por que baseado em hash, e não "sempre reenviar": a API do Discord
- * não deixa trocar só a imagem de um emoji já existente - só apagar e
- * criar de novo (o que gera um ID novo). Se isso rodasse sem
- * critério a cada restart, todo boot criaria emojis novos à toa (o
- * bot reinicia com frequência: deploy, PM2, queda de conexão), e
- * ainda arriscaria rate limit da API sem necessidade nenhuma.
+ * Mapping fica em PERSIST_DIR (volume no Railway) — NÃO no repo.
+ * Se ficasse em data/, todo deploy recolocava IDs velhos e o Discord
+ * renderizava <:name:id> como texto :name:.
  *
- * Em vez disso: cada entrada de data/character-emojis.json guarda,
- * além do id/name do emoji, um hash SHA-256 do arquivo do ícone no
- * momento em que ele foi enviado. No boot, comparamos esse hash com o
- * hash atual do arquivo em data/icons/ - só ícones cujo hash mudou
- * (ou que nunca foram enviados) disparam uma chamada à API.
- *
- * EXTRA: se o ID guardado no JSON não existir mais na application
- * (bot recriado, token trocado, emoji apagado manualmente), o mapping
- * é invalidado e o ícone é reenviado. Sem isso o bot emite <:name:id>
- * que o Discord renderiza como texto :name:.
- *
- * Nunca lança erro pra fora - uma falha aqui (rate limit, rede
- * instável, etc) é logada e o bot continua subindo normalmente.
+ * Hash do ícone: só reenvia se o PNG mudou OU se o ID sumiu da application.
  */
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +16,8 @@ const config = require('../config/config.js');
 const { invalidateEmojiCache } = require('./characterEmojis.js');
 
 const ICONS_DIR = path.join(__dirname, '..', '..', 'data', 'icons');
-const MAPPING_PATH = path.join(__dirname, '..', '..', 'data', 'character-emojis.json');
+const MAPPING_PATH = path.join(config.PERSIST_DIR, 'character-emojis.json');
+const LEGACY_MAPPING_PATH = path.join(__dirname, '..', '..', 'data', 'character-emojis.json');
 
 const EMOJI_SIZE = 128;
 const MAX_EMOJI_BYTES = 256 * 1024;
@@ -69,15 +53,26 @@ async function resizeForEmoji(iconPath) {
 }
 
 function loadMapping() {
-  if (!fs.existsSync(MAPPING_PATH)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(MAPPING_PATH, 'utf8'));
-  } catch {
-    return {};
+  for (const p of [MAPPING_PATH, LEGACY_MAPPING_PATH]) {
+    if (!fs.existsSync(p)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (data && typeof data === 'object') return data;
+    } catch {
+      /* try next */
+    }
   }
+  return {};
 }
 
 function saveMapping(mapping) {
+  try {
+    if (!fs.existsSync(config.PERSIST_DIR)) {
+      fs.mkdirSync(config.PERSIST_DIR, { recursive: true });
+    }
+  } catch {
+    /* ignore */
+  }
   fs.writeFileSync(MAPPING_PATH, JSON.stringify(mapping, null, 2));
 }
 
@@ -85,10 +80,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Fetch current application emoji IDs (string set).
- * Returns null on failure so we skip the verify pass.
- */
 async function loadLiveEmojiIds(client) {
   try {
     const emojis = await client.application.emojis.fetch();
@@ -100,8 +91,6 @@ async function loadLiveEmojiIds(client) {
 }
 
 /**
- * Roda a sincronização. Chamado a partir do evento ready, com o
- * client já logado (client.application disponível).
  * @param {import('discord.js').Client} client
  */
 async function syncCharacterEmojis(client) {
@@ -135,28 +124,47 @@ async function syncCharacterEmojis(client) {
     const hash = hashFile(iconPath);
     const existing = mapping[String(card.id)];
 
-    // ID no JSON que não existe mais na application → força reupload
     const idMissing =
-      liveIds &&
+      liveIds != null &&
       existing?.id &&
       !liveIds.has(String(existing.id));
 
-    if (existing && existing.hash === hash && !idMissing) {
+    // Primeira vez no volume: mapping legado do repo com IDs de outro app
+    const forceFromLegacy =
+      liveIds == null &&
+      existing?.id &&
+      !fs.existsSync(MAPPING_PATH);
+
+    if (existing && existing.hash === hash && !idMissing && !forceFromLegacy) {
       continue;
     }
 
-    if (idMissing) staleCount++;
-    pending.push({ card, iconPath, hash, existing, idMissing: Boolean(idMissing) });
+    if (idMissing || forceFromLegacy) staleCount++;
+    pending.push({
+      card,
+      iconPath,
+      hash,
+      existing,
+      idMissing: Boolean(idMissing || forceFromLegacy)
+    });
   }
 
   if (pending.length === 0) {
-    logger.info('emojiSync: todos os ícones de emoji já estão sincronizados, nenhuma chamada à API necessária.');
+    logger.info('emojiSync: todos os ícones de emoji já estão sincronizados.');
+    if (!fs.existsSync(MAPPING_PATH) && Object.keys(mapping).length > 0) {
+      saveMapping(mapping);
+    }
+    try {
+      invalidateEmojiCache();
+    } catch {
+      /* ignore */
+    }
     return;
   }
 
   logger.info(
     `emojiSync: ${pending.length} ícone(s) a sincronizar` +
-      (staleCount ? ` (${staleCount} ID(s) stale / :name:)` : '') +
+      (staleCount ? ` (${staleCount} stale / :name:)` : '') +
       '…'
   );
 
@@ -170,7 +178,7 @@ async function syncCharacterEmojis(client) {
           await client.application.emojis.delete(existing.id);
         } catch (error) {
           logger.warn(
-            `emojiSync: não consegui apagar o emoji antigo de ${card.name} (${existing.id}), tentando enviar mesmo assim`,
+            `emojiSync: não consegui apagar emoji antigo de ${card.name} (${existing.id})`,
             error.message
           );
         }
@@ -189,7 +197,7 @@ async function syncCharacterEmojis(client) {
       saveMapping(mapping);
 
       logger.success(
-        `emojiSync: ${card.name} -> emoji "${created.name}" atualizado (${(resizedBuffer.length / 1024).toFixed(1)}KB)` +
+        `emojiSync: ${card.name} -> "${created.name}" (${(resizedBuffer.length / 1024).toFixed(1)}KB)` +
           (idMissing ? ' [stale fixed]' : '')
       );
       synced++;
@@ -211,4 +219,4 @@ async function syncCharacterEmojis(client) {
   logger.info(`emojiSync: concluído - ${synced} sincronizado(s), ${failed} falha(s).`);
 }
 
-module.exports = { syncCharacterEmojis };
+module.exports = { syncCharacterEmojis, MAPPING_PATH };
