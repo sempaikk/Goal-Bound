@@ -30,6 +30,7 @@ const crypto = require('crypto');
 const sharp = require('sharp');
 const logger = require('../logger/logger.js');
 const config = require('../config/config.js');
+const { invalidateEmojiCache } = require('./characterEmojis.js');
 
 const ICONS_DIR = path.join(__dirname, '..', '..', 'data', 'icons');
 const MAPPING_PATH = path.join(__dirname, '..', '..', 'data', 'character-emojis.json');
@@ -199,6 +200,12 @@ async function syncCharacterEmojis(client) {
       logger.error(`emojiSync: falha ao sincronizar ${card.name} - ${detail}`);
       failed++;
     }
+  }
+
+  try {
+    invalidateEmojiCache();
+  } catch {
+    /* ignore */
   }
 
   logger.info(`emojiSync: concluído - ${synced} sincronizado(s), ${failed} falha(s).`);
