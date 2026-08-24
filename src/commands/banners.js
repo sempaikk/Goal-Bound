@@ -15,10 +15,9 @@ const { RARITIES } = require('../services/rarities.js');
 const { buildStatusEmbed } = require('../utils/statusEmbed.js');
 const { formatDuration, progressBar, emojiTag, safeTruncate, brandFooter } = require('../utils/format.js');
 const { getEmojiForCard } = require('../services/characterEmojis.js');
-const { ICONS_DIR } = require('../services/FieldRenderer.js');
 const { getProgressForXp } = require('../services/xpCurve.js');
 const { maybeSendDmHint, notifyLevelUps } = require('../services/dmNotifier.js');
-const { formatDupTag, formatDupStatusLine } = require('../services/pullGrant.js');
+const { formatDupStatusLine } = require('../services/pullGrant.js');
 const { isPrivileged } = require('../services/staff.js');
 const {
   recordPull,
@@ -118,7 +117,6 @@ function buildHubRow(ownerId) {
 function buildHubEmbed(ownerId, ieneBalance, privileged, remainingMs) {
   const strip = buildStatusStrip({ userId: ownerId, bannerId: 'padrao', remainingMs, ieneBalance, cost: SUMMON_COST_IENE });
   const lines = strip.split('\n').filter(l => !l.toLowerCase().includes('pity'));
-  if (!privileged) lines.push(`_${t(ownerId, 'ban_multi_hint')}_`);
   const art = resolveHubArt();
   const embed = new EmbedBuilder()
     .setColor(config.COLORS.PRIMARY)
@@ -150,8 +148,6 @@ function buildBannerPanelRow(ownerId, bannerId, remainingMs, ieneBalance) {
   const onCd = remainingMs > 0 && !privileged;
   const bal = ieneBalance ?? 0;
   const can1 = privileged || (!onCd && bal >= 1);
-  const can5 = privileged || (!onCd && bal >= 5);
-  const can10 = privileged || (!onCd && bal >= 10);
   let pullLabel;
   if (onCd) pullLabel = `⏱️ ${formatDuration(remainingMs)}`;
   else if (!privileged && bal < 1) pullLabel = `💰 ${t(ownerId, 'ban_need_iene')}`;
@@ -160,9 +156,7 @@ function buildBannerPanelRow(ownerId, bannerId, remainingMs, ieneBalance) {
   const other = getBanner(otherId);
   const rows = [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:pull:${bannerId}:1`).setLabel(pullLabel.slice(0, 80)).setStyle(can1 ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(!can1),
-      new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:ask:${bannerId}:5`).setLabel('x5').setStyle(ButtonStyle.Primary).setDisabled(!can5),
-      new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:ask:${bannerId}:10`).setLabel('x10').setStyle(ButtonStyle.Primary).setDisabled(!can10)
+      new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:pull:${bannerId}:1`).setLabel(pullLabel.slice(0, 80)).setStyle(can1 ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(!can1)
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:select:${otherId}`).setLabel(other.name.slice(0, 80)).setEmoji(other.emoji).setStyle(ButtonStyle.Secondary),
@@ -179,25 +173,6 @@ function rollCard(allCards, bannerId, userId) {
   return rollStandardWithPity(userId, pool);
 }
 
-const RARITY_RANK = { LOCKED: 1, EGOISTA: 2, NEW_GEN: 3 };
-
-function highlightScore(entry) {
-  if (!entry || entry.miss || !entry.card) return -1;
-  if (entry.card.position === 'CO') return entry.card.id === 14 ? 1000 : 100;
-  return RARITY_RANK[entry.rarity] || 0;
-}
-
-function pickHighlight(results) {
-  let best = null, bestScore = -1;
-  for (const r of results) {
-    const score = highlightScore(r);
-    if (score < 0) continue;
-    if (score > bestScore) { best = r; bestScore = score; continue; }
-    if (score === bestScore && best && r.neu && !best.neu) best = r;
-  }
-  return best;
-}
-
 function attachCardArt(card) {
   const files = [];
   let imageSource = null;
@@ -205,7 +180,6 @@ function attachCardArt(card) {
   if (card.localImage) {
     const localPath = path.join(IMAGES_DIR, card.localImage);
     if (fs.existsSync(localPath)) {
-      // Discord attachment names must be basename only (no folders)
       const attachName = path.basename(card.localImage);
       files.push(new AttachmentBuilder(localPath, { name: attachName }));
       imageSource = `attachment://${attachName}`;
@@ -214,7 +188,6 @@ function attachCardArt(card) {
     }
   }
 
-  // Thumbnail / icon intentionally disabled — FUT card is the only character art.
   return { files, imageSource, thumbnailSource: null };
 }
 
@@ -301,13 +274,12 @@ async function safeEditOrFollow(interaction, payload, ephemeral = true) {
   }
 }
 
-async function runPull(interaction, bannerId, count = 1) {
+async function runPull(interaction, bannerId) {
   const userId = interaction.user.id;
   const username = interaction.user.username;
   const privileged = isPrivileged(userId);
   const banner = getBanner(bannerId);
   const isCoachBanner = bannerId === 'treinadores';
-  count = Math.min(10, Math.max(1, count));
 
   const allCards = DataService.loadCards();
   const pool = cardsForBanner(allCards, bannerId);
@@ -334,10 +306,10 @@ async function runPull(interaction, bannerId, count = 1) {
   }
 
   let ieneBalance = DataService.getIene(userId);
-  const cost = privileged ? 0 : SUMMON_COST_IENE * count;
+  const cost = privileged ? 0 : SUMMON_COST_IENE;
   if (!privileged && ieneBalance < cost) {
     const remainingMs = remainingFor(userId);
-    const body = `**${cost}** 💰 · x${count}\n${t(userId, 'balance')}: **${ieneBalance.toLocaleString('en-US')}**\n\n${t(userId, 'no_iene_cta')}`;
+    const body = `**${cost}** 💰\n${t(userId, 'balance')}: **${ieneBalance.toLocaleString('en-US')}**\n\n${t(userId, 'no_iene_cta')}`;
     await safeEditOrFollow(interaction, { embeds: [buildStatusEmbed('WARNING', `💰 ${t(userId, 'ban_not_enough')}`, body)], components: [...buildBannerPanelRow(userId, bannerId, remainingMs, ieneBalance), buildCtaRow(userId, 'no_iene')].slice(0, 5), files: [] }, true);
     return;
   }
@@ -352,7 +324,7 @@ async function runPull(interaction, bannerId, count = 1) {
       const spent = trySpendIene(userId, cost);
       if (!spent.ok) {
         const remainingMs = remainingFor(userId);
-        const body = `**${cost}** 💰 · x${count}\n${t(userId, 'balance')}: **${spent.balance.toLocaleString('en-US')}**\n\n${t(userId, 'no_iene_cta')}`;
+        const body = `**${cost}** 💰\n${t(userId, 'balance')}: **${spent.balance.toLocaleString('en-US')}**\n\n${t(userId, 'no_iene_cta')}`;
         await interaction.editReply({ embeds: [buildStatusEmbed('WARNING', `💰 ${t(userId, 'ban_not_enough')}`, body)], components: [...buildBannerPanelRow(userId, bannerId, remainingMs, spent.balance), buildCtaRow(userId, 'no_iene')].slice(0, 5), files: [] });
         return;
       }
@@ -373,65 +345,6 @@ async function runPull(interaction, bannerId, count = 1) {
   }
 
   const author = pullAuthor(interaction);
-
-  if (count > 1) {
-    const results = [];
-    let completedThis = false;
-    let ownedNow = ownedInPool;
-    let anyPity = false;
-
-    for (let i = 0; i < count; i++) {
-      const { card, rarity, pityForced } = rollCard(allCards, bannerId, userId);
-      if (pityForced) anyPity = true;
-      if (!card) { results.push({ miss: true }); continue; }
-      const grant = DataService.addCardFromPull(userId, card, rarity);
-      if (grant.isNew) { ownedNow += 1; if (ownedNow === poolSize) completedThis = true; }
-      recordPull(userId, { cardId: card.id, name: card.name, banner: bannerId, rarity });
-      const rar = RARITIES[rarity];
-      const icon = emojiTag(getEmojiForCard(card.id)) || '';
-      const rarLabel = rar ? `${rar.emoji} ${rarityLabel(userId, rarity)}` : (isCoachBanner ? t(userId, 'team_master') : '?');
-      results.push({ name: card.name, icon, rar: rarLabel, neu: grant.isNew, grant, pity: Boolean(pityForced), card, rarity });
-    }
-
-    const lines = results.map((r, idx) => {
-      if (r.miss) return `**${idx + 1}.** —`;
-      const tag = formatDupTag(userId, r.grant || { isNew: r.neu }, t);
-      const pity = r.pity ? ` · **PITY**` : '';
-      return `**${idx + 1}.** ${r.icon} **${r.name}** · ${r.rar}${tag}${pity}`;
-    }).join('\n');
-
-    let extra = '';
-    if (completedThis) extra = `\n\n${poolCompleteHint(bannerId, userId, allCards)}`;
-    if (anyPity) extra += `\n${t(userId, 'soft_pity')}`;
-
-    const moneyLine = privileged
-      ? t(userId, 'ban_free_line', { bal: ieneBalance.toLocaleString('en-US') })
-      : t(userId, 'ban_cost_line', { cost, bal: ieneBalance.toLocaleString('en-US') });
-
-    const highlight = pickHighlight(results);
-    const art = highlight?.card ? attachCardArt(highlight.card) : { files: [], imageSource: null, thumbnailSource: null };
-    let quote = '';
-    if (highlight?.card?.catchphrase) quote = `\n\n💬 *"${safeTruncate(highlight.card.catchphrase, 120)}"*`;
-    const highlightColor = highlight?.rarity && RARITIES[highlight.rarity] ? RARITIES[highlight.rarity].color : config.COLORS.PRIMARY;
-
-    const embed = new EmbedBuilder()
-      .setColor(completedThis ? config.COLORS.SUCCESS : highlightColor)
-      .setAuthor(author)
-      .setTitle(`${banner.emoji} ${t(userId, 'ban_multi_title', { n: count })}`)
-      .setDescription(safeTruncate(`${lines}${quote}${extra}\n\n${moneyLine}\n${nextSummonLine(userId, privileged)}`, 4000))
-      .setFooter({ text: collectionFooter(userId, ownedNow, poolSize, privileged, banner) })
-      .setTimestamp();
-    if (art.imageSource) embed.setImage(art.imageSource);
-
-    const posted = await publishPullToChannel(interaction, { embeds: [embed], files: art.files });
-    if (!posted.ok) await interaction.editReply({ embeds: [embed], components: buildBannerPanelRow(userId, bannerId, privileged ? 0 : remainingFor(userId), ieneBalance), files: art.files });
-    else await restoreEphemeralPanel(interaction, userId, bannerId);
-
-    const levelUps = results.filter(row => row.grant && row.grant.leveledUp).map(row => ({ cardId: row.card.id, cardName: row.card.name, newLevel: row.grant.newLevel }));
-    if (levelUps.length) { try { await notifyLevelUps(interaction.user, levelUps); } catch (_) {} }
-    await maybeSendDmHint(interaction);
-    return;
-  }
 
   const { card: randomCard, rarity: rolledRarity, pityForced } = rollCard(allCards, bannerId, userId);
   const rarityInfo = RARITIES[rolledRarity] || RARITIES.LOCKED;
@@ -502,8 +415,8 @@ async function runPull(interaction, bannerId, count = 1) {
 
 module.exports = {
   data: withPtBr(
-    new SlashCommandBuilder().setName('banners').setDescription('🎴 Banner — Standard / Coaches, x1 x5 x10'),
-    '🎴 Banner — Standard / Coaches, x1 x5 x10'
+    new SlashCommandBuilder().setName('banners').setDescription('🎴 Banner — Standard / Coaches'),
+    '🎴 Banner — Standard / Coaches'
   ),
 
   async execute(interaction) {
@@ -522,7 +435,7 @@ module.exports = {
   },
 
   async handleComponent(interaction) {
-    const { ownerId, action, bannerId, count } = parseCustomId(interaction.customId);
+    const { ownerId, action, bannerId } = parseCustomId(interaction.customId);
     if (interaction.user.id !== ownerId) {
       await interaction.reply({ embeds: [buildStatusEmbed('WARNING', '🚫', t(ownerId, 'ban_open_self'))], flags: EPHEMERAL });
       return;
@@ -531,26 +444,15 @@ module.exports = {
       if (action === 'hub') { await interaction.deferUpdate(); await showHub(interaction, ownerId); return; }
       if (action === 'gatenotify') { await interaction.deferUpdate(); toggleGateNotify(ownerId); await showHub(interaction, ownerId); return; }
       if (action === 'select') { await interaction.deferUpdate(); await showBannerPanel(interaction, ownerId, bannerId === 'treinadores' ? 'treinadores' : 'padrao'); return; }
-      if (action === 'ask') {
-        const n = count === 10 ? 10 : 5;
+      if (action === 'ask' || action === 'go' || action === 'cancel') {
         const id = bannerId === 'treinadores' ? 'treinadores' : 'padrao';
-        const privileged = isPrivileged(ownerId);
-        const cost = privileged ? 0 : n * SUMMON_COST_IENE;
-        const bal = DataService.getIene(ownerId);
-        await interaction.update({
-          embeds: [buildStatusEmbed('WARNING', t(ownerId, 'ban_confirm', { n }), privileged ? `x${n} · **${getBanner(id).name}**` : `**${cost}** 💰 · x${n} · **${getBanner(id).name}**\n${t(ownerId, 'balance')}: **${bal.toLocaleString('en-US')}**`)],
-          components: [new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:go:${id}:${n}`).setLabel(`x${n}`).setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId(`${CUSTOM_ID_PREFIX}:${ownerId}:cancel:${id}`).setLabel(t(ownerId, 'ban_cancel')).setStyle(ButtonStyle.Secondary)
-          )],
-          files: []
-        });
+        await interaction.deferUpdate();
+        await showBannerPanel(interaction, ownerId, id);
         return;
       }
-      if (action === 'cancel') { const id = bannerId === 'treinadores' ? 'treinadores' : 'padrao'; await interaction.deferUpdate(); await showBannerPanel(interaction, ownerId, id); return; }
-      if (action === 'go' || action === 'pull') {
+      if (action === 'pull') {
         const id = bannerId === 'treinadores' ? 'treinadores' : 'padrao';
-        await runPull(interaction, id, action === 'go' ? count : (count || 1));
+        await runPull(interaction, id);
         return;
       }
       await interaction.deferUpdate();
