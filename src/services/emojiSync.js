@@ -1,11 +1,9 @@
 /**
  * Sincroniza Application Emojis com data/icons/ no boot.
  *
- * Mapping fica em PERSIST_DIR (volume no Railway) — NÃO no repo.
- * Se ficasse em data/, todo deploy recolocava IDs velhos e o Discord
- * renderizava <:name:id> como texto :name:.
- *
- * Hash do ícone: só reenvia se o PNG mudou OU se o ID sumiu da application.
+ * Mapping em PERSIST_DIR (volume Railway).
+ * Upload usa data URI PNG explícito — buffer cru virava data:image/jpg e
+ * o Discord respondia "Invalid Form Body".
  */
 const fs = require('fs');
 const path = require('path');
@@ -28,7 +26,8 @@ function toEmojiName(cardName) {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return slug.slice(0, 32).padEnd(2, '_');
+  const name = slug.slice(0, 32).replace(/^_+|_+$/g, '');
+  return name.length >= 2 ? name : (name + '__').slice(0, 2);
 }
 
 function hashFile(filePath) {
@@ -37,19 +36,36 @@ function hashFile(filePath) {
 }
 
 async function resizeForEmoji(iconPath) {
-  const buffer = await sharp(iconPath)
-    .resize(EMOJI_SIZE, EMOJI_SIZE, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-    .png({ compressionLevel: 9 })
+  // Discord exige ~128x128 e ≤256KB. PNG explícito (não deixa o d.js marcar como jpg).
+  const buffer = await sharp(iconPath, { animated: false })
+    .ensureAlpha()
+    .resize(EMOJI_SIZE, EMOJI_SIZE, {
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 }
+    })
+    .png({ compressionLevel: 9, force: true })
     .toBuffer();
 
   if (buffer.length > MAX_EMOJI_BYTES) {
-    throw new Error(
-      `Icon still too large after resize: ${(buffer.length / 1024).toFixed(0)}KB ` +
-      `(limit: ${MAX_EMOJI_BYTES / 1024}KB) - ${iconPath}`
-    );
+    // Segunda tentativa mais agressiva
+    const smaller = await sharp(buffer)
+      .resize(96, 96, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png({ compressionLevel: 9, force: true, quality: 80 })
+      .toBuffer();
+    if (smaller.length > MAX_EMOJI_BYTES) {
+      throw new Error(
+        `Icon still too large: ${(smaller.length / 1024).toFixed(0)}KB (limit 256KB) - ${iconPath}`
+      );
+    }
+    return smaller;
   }
 
   return buffer;
+}
+
+/** Discord API expects image as data URI. Explicit PNG avoids jpg mislabel. */
+function toPngDataUri(buffer) {
+  return `data:image/png;base64,${buffer.toString('base64')}`;
 }
 
 function loadMapping() {
@@ -78,6 +94,18 @@ function saveMapping(mapping) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatApiError(error) {
+  const raw = error.rawError || error;
+  const msg = raw.message || error.message || 'unknown';
+  let extra = '';
+  try {
+    if (raw.errors) extra = ' ' + JSON.stringify(raw.errors);
+  } catch {
+    /* ignore */
+  }
+  return msg + extra;
 }
 
 async function loadLiveEmojiIds(client) {
@@ -129,23 +157,25 @@ async function syncCharacterEmojis(client) {
       existing?.id &&
       !liveIds.has(String(existing.id));
 
-    // Primeira vez no volume: mapping legado do repo com IDs de outro app
     const forceFromLegacy =
       liveIds == null &&
       existing?.id &&
       !fs.existsSync(MAPPING_PATH);
 
-    if (existing && existing.hash === hash && !idMissing && !forceFromLegacy) {
+    // Mapping vazio no volume + arquivo legado {} → todos precisam upload
+    const noEntry = !existing || !existing.id;
+
+    if (existing && existing.hash === hash && !idMissing && !forceFromLegacy && !noEntry) {
       continue;
     }
 
-    if (idMissing || forceFromLegacy) staleCount++;
+    if (idMissing || forceFromLegacy || noEntry) staleCount++;
     pending.push({
       card,
       iconPath,
       hash,
       existing,
-      idMissing: Boolean(idMissing || forceFromLegacy)
+      idMissing: Boolean(idMissing || forceFromLegacy || noEntry)
     });
   }
 
@@ -164,7 +194,7 @@ async function syncCharacterEmojis(client) {
 
   logger.info(
     `emojiSync: ${pending.length} ícone(s) a sincronizar` +
-      (staleCount ? ` (${staleCount} stale / :name:)` : '') +
+      (staleCount ? ` (${staleCount} novos/stale)` : '') +
       '…'
   );
 
@@ -187,26 +217,27 @@ async function syncCharacterEmojis(client) {
 
       const resizedBuffer = await resizeForEmoji(iconPath);
       const emojiName = toEmojiName(card.name);
+      const dataUri = toPngDataUri(resizedBuffer);
 
       const created = await client.application.emojis.create({
-        attachment: resizedBuffer,
+        attachment: dataUri,
         name: emojiName
       });
 
-      mapping[String(card.id)] = { id: created.id, name: created.name, hash };
+      mapping[String(card.id)] = { id: String(created.id), name: created.name, hash };
       saveMapping(mapping);
 
       logger.success(
         `emojiSync: ${card.name} -> "${created.name}" (${(resizedBuffer.length / 1024).toFixed(1)}KB)` +
-          (idMissing ? ' [stale fixed]' : '')
+          (idMissing ? ' [new/stale fixed]' : '')
       );
       synced++;
 
       await sleep(1200);
     } catch (error) {
-      const detail = error.rawError?.message || error.message;
-      logger.error(`emojiSync: falha ao sincronizar ${card.name} - ${detail}`);
+      logger.error(`emojiSync: falha ao sincronizar ${card.name} - ${formatApiError(error)}`);
       failed++;
+      await sleep(800);
     }
   }
 
