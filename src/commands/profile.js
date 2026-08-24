@@ -266,7 +266,7 @@ function buildMainView(d, viewerId) {
       new SectionBuilder()
         .addTextDisplayComponents(
           new TextDisplayBuilder().setContent('**COMPARTILHAR PERFIL**'),
-          new TextDisplayBuilder().setContent('-# Gere uma cópia visual deste painel para mostrar no servidor.')
+          new TextDisplayBuilder().setContent('-# Gera uma cópia deste painel no canal para o servidor ver.')
         )
         .setButtonAccessory(
           button(`${CUSTOM_ID_PREFIX}:${viewerId}:share`, 'Compartilhar', ButtonStyle.Success)
@@ -437,9 +437,34 @@ module.exports = {
       return;
     }
 
+    // Public share: keep private panel, post a public copy in the channel
     if (action === 'share') {
+      await interaction.deferUpdate();
       const built = buildProfilePayload(interaction.user, ownerId, 'main');
-      await sendBuilt(interaction, built);
+      try {
+        if (interaction.channel && typeof interaction.channel.send === 'function') {
+          await interaction.channel.send({
+            components: [built.container],
+            flags: MessageFlags.IsComponentsV2,
+            files: built.files || [],
+            allowedMentions: { parse: [] }
+          });
+        } else {
+          await interaction.followUp({
+            components: [built.container],
+            flags: MessageFlags.IsComponentsV2,
+            files: built.files || []
+          });
+        }
+      } catch (error) {
+        logger.error('Erro ao compartilhar perfil', error.message);
+        try {
+          await interaction.followUp({
+            embeds: [buildStatusEmbed('ERROR', 'Não foi possível compartilhar o perfil neste canal.')],
+            flags: 64
+          });
+        } catch { /* ignore */ }
+      }
       return;
     }
 
